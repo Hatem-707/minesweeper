@@ -1,5 +1,5 @@
 #include <algorithm>
-#include <fmt/base.h>
+#include <array>
 #include <memory>
 #include <raylib.h>
 #include <string>
@@ -51,7 +51,7 @@ protected:
 
 public:
   std::vector<std::unique_ptr<Drawable>> childern;
-
+  virtual ~Drawable() = default;
   Drawable(int x, int y, int width, int height);
   void draw();
   virtual void self_draw() = 0;
@@ -95,6 +95,7 @@ class Section : public Drawable
 
 public:
   Section(int x, int y, int width, int height, std::string name, Color color);
+  virtual ~Section() = default;
   void self_draw() final;
 };
 
@@ -142,7 +143,7 @@ enum class CellState
   unchecked,
   clean,
   surface_mine,
-  burried_mine,
+  buried_mine,
 };
 
 class MapCell final : public Drawable
@@ -157,7 +158,7 @@ class MapCell final : public Drawable
         return COLORS::green;
       case CellState::surface_mine:
         return COLORS::orange;
-      case CellState::burried_mine:
+      case CellState::buried_mine:
         return COLORS::red;
     }
   };
@@ -180,15 +181,15 @@ MapCell::self_draw()
   Color color = get_color();
   Rectangle rec = get_rec(UI::CELL_PAD);
   DrawRectangleRounded(rec, UI::DEFAULT_ROUNDNESS, 0, color);
-  for (auto& child : childern) {
-    child->draw();
-  }
 }
 
 class Map final : public Section
 {
+  std::array<MapCell*, UI::CELLS_NUM * UI::CELLS_NUM> cells;
+
 public:
   Map();
+  MapCell& cell_at(int x, int y);
 };
 
 Map::Map()
@@ -214,9 +215,16 @@ Map::Map()
         static_cast<int>(rec.y + j * cell_height + leftover_y),
         cell_width,
         cell_height);
+      cells[i * UI::CELLS_NUM + j] = cell.get();
       childern.push_back(std::move(cell));
     }
   }
+}
+
+MapCell&
+Map::cell_at(int x, int y)
+{
+  return *cells[y * UI::CELLS_NUM + x];
 }
 
 class Feed final : public Section
