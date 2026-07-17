@@ -22,6 +22,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(raylib REQUIRED)
 find_package(fmt REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(gtk3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+pkg_search_module(gstreamer REQUIRED IMPORTED_TARGET gstreamer-1.0>=1.4)
+pkg_search_module(gstreamer-app REQUIRED IMPORTED_TARGET gstreamer-app-1.0>=1.4)
+pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0>=1.4)
 
 # Adding our source files
 file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/src/*.cpp") 
@@ -32,5 +39,12 @@ add_executable(${PROJECT_NAME})
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 target_sources(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_INCLUDE})
-target_link_libraries(${PROJECT_NAME} PRIVATE raylib fmt)
-
+target_link_libraries(${PROJECT_NAME} 
+                      PRIVATE 
+                      raylib 
+                      fmt
+                      PkgConfig::gtk3
+                      PkgConfig::gstreamer
+                      PkgConfig::gstreamer-app
+                      PkgConfig::gstreamer-video
+)
