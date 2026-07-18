@@ -3,16 +3,17 @@
 #include <raylib.h>
 #include <thread>
 
+#include "camera.hpp"
 #include "ui.hpp"
 
 class Commponents final : protected Drawable
 {
   friend class App;
   void self_draw() override {};
-  Commponents(Texture2D& camera_texture);
+  Commponents(GstCamera& camera_texture);
 };
 
-Commponents::Commponents(Texture2D& camera_texture)
+Commponents::Commponents(GstCamera& camera_texture)
   : Drawable(0, 0, UI::SCREEN_WIDTH, UI::SCREEN_HEIGHT)
 {
   childern.push_back(std::make_unique<Map>());
@@ -22,7 +23,7 @@ Commponents::Commponents(Texture2D& camera_texture)
 
 class App
 {
-  Texture2D camera_texture;
+  GstCamera camera;
   Commponents comp;
   std::array<std::jthread, 1> sub_threads;
 
@@ -32,9 +33,8 @@ public:
 };
 
 App::App()
-  : camera_texture(LoadTextureFromImage(
-      GenImageColor(UI::CAMERA_RES, UI::CAMERA_RES, WHITE)))
-  , comp(camera_texture)
+  : camera(UI::CAMERA_RES, UI::CAMERA_RES)
+  , comp(camera)
 {
 }
 

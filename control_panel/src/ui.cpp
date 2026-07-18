@@ -1,4 +1,5 @@
 #include "ui.hpp"
+#include "camera.hpp"
 
 Drawable::Drawable(int x, int y, int width, int height)
   : x(x)
@@ -124,9 +125,9 @@ Map::cell_at(int x, int y)
   return *cells[y * UI::CELLS_NUM + x];
 }
 
-CameraFeed::CameraFeed(Texture2D& camera_texture, Rectangle feed_rec)
+CameraFeed::CameraFeed(GstCamera& camera, Rectangle feed_rec)
   : Drawable(feed_rec)
-  , camera_texture(camera_texture)
+  , camera(camera)
 {
   if (feed_rec.width != feed_rec.height) {
     fmt::println("WARN!!! Feed Recatangle isn't a square");
@@ -137,11 +138,13 @@ void
 CameraFeed::self_draw()
 {
   Rectangle rec = get_rec();
-  float scale = rec.width / camera_texture.width;
-  DrawTextureEx(camera_texture, { rec.x, rec.y }, 0, scale, WHITE);
+  Texture2D texture = camera.get_texture();
+  float scale = rec.width / texture.width;
+  DrawTextureEx(texture, { rec.x, rec.y }, 0, scale, WHITE);
+  camera.release_texture();
 }
 
-Feed::Feed(Texture2D& camera_texture)
+Feed::Feed(GstCamera& camera)
   : Section(UI::FEED_X,
             UI::FEED_Y,
             UI::FEED_WIDTH,
@@ -154,12 +157,7 @@ Feed::Feed(Texture2D& camera_texture)
   float x = rec.x + rec.width / 2 - edge_len / 2;
   float y = rec.y + rec.height / 2 - edge_len / 2;
   Rectangle feed_rec{ x, y, edge_len, edge_len };
-  fmt::println("feed_rec -> x: {}, y: {}, width: {}, height: {}",
-               feed_rec.x,
-               feed_rec.y,
-               feed_rec.width,
-               feed_rec.height);
-  auto feed = std::make_unique<CameraFeed>(camera_texture, feed_rec);
+  auto feed = std::make_unique<CameraFeed>(camera, feed_rec);
 
   childern.push_back(std::move(feed));
 }

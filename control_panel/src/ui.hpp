@@ -1,3 +1,5 @@
+#pragma once
+#include "camera.hpp"
 #include <array>
 #include <fmt/base.h>
 #include <memory>
@@ -118,18 +120,18 @@ public:
 
 class CameraFeed final : public Drawable
 {
-  Texture2D& camera_texture;
+  GstCamera& camera;
   void self_draw() override;
 
 public:
-  CameraFeed(Texture2D& camera_texture, Rectangle feed_rec);
+  CameraFeed(GstCamera& camera, Rectangle feed_rec);
 };
 
 class Feed final : public Section
 {
 
 public:
-  Feed(Texture2D& camera_texture);
+  Feed(GstCamera& camera_texture);
 };
 
 class Controls final : public Section
