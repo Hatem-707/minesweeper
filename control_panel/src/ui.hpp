@@ -52,7 +52,7 @@ protected:
   int height;
 
 public:
-  std::vector<std::unique_ptr<Drawable>> childern;
+  std::vector<std::unique_ptr<Drawable>> children;
   virtual ~Drawable() = default;
   Drawable(int x, int y, int width, int height);
   Drawable(Rectangle rec);

@@ -32,7 +32,7 @@ void
 Drawable::draw()
 {
   self_draw();
-  for (auto& child : childern) {
+  for (auto& child : children) {
     child->draw();
   }
 }
@@ -114,7 +114,7 @@ Map::Map()
         cell_width,
         cell_height);
       cells[i * UI::CELLS_NUM + j] = cell.get();
-      childern.push_back(std::move(cell));
+      children.push_back(std::move(cell));
     }
   }
 }
@@ -159,7 +159,7 @@ Feed::Feed(GstCamera& camera)
   Rectangle feed_rec{ x, y, edge_len, edge_len };
   auto feed = std::make_unique<CameraFeed>(camera, feed_rec);
 
-  childern.push_back(std::move(feed));
+  children.push_back(std::move(feed));
 }
 
 Controls::Controls()

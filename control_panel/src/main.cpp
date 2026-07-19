@@ -6,25 +6,25 @@
 #include "camera.hpp"
 #include "ui.hpp"
 
-class Commponents final : protected Drawable
+class Components final : protected Drawable
 {
   friend class App;
   void self_draw() override {};
-  Commponents(GstCamera& camera_texture);
+  Components(GstCamera& camera_texture);
 };
 
-Commponents::Commponents(GstCamera& camera_texture)
+Components::Components(GstCamera& camera_texture)
   : Drawable(0, 0, UI::SCREEN_WIDTH, UI::SCREEN_HEIGHT)
 {
-  childern.push_back(std::make_unique<Map>());
-  childern.push_back(std::make_unique<Feed>(camera_texture));
-  childern.push_back(std::make_unique<Controls>());
+  children.push_back(std::make_unique<Map>());
+  children.push_back(std::make_unique<Feed>(camera_texture));
+  children.push_back(std::make_unique<Controls>());
 }
 
 class App
 {
   GstCamera camera;
-  Commponents comp;
+  Components comp;
   std::array<std::jthread, 1> sub_threads;
 
 public:
@@ -43,8 +43,8 @@ App::run()
 {
   while (!WindowShouldClose()) {
     BeginDrawing();
-    comp.draw();
     ClearBackground(COLORS::background);
+    comp.draw();
     EndDrawing();
   }
 }

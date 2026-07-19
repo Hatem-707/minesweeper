@@ -11,7 +11,7 @@
 
 struct CameraBuffer
 {
-  alignas(64) std::atomic<bool> updated{ false };
+  bool updated{ false };
   alignas(64) std::atomic<bool> reading{ false };
   std::pair<int, int> dimesions;
   std::unique_ptr<uint8_t[]> data;
@@ -23,7 +23,10 @@ struct GstData
   GstBus* bus;
   GstMessage* msg;
   GstStateChangeReturn ret;
+  CameraBuffer* d_buf;
   GstData(CameraBuffer*);
+  bool should_close{ false };
+  void close_pipeline();
   ~GstData();
   void run();
 };
@@ -37,6 +40,7 @@ class GstCamera
 
 public:
   GstCamera(int width, int height);
+  ~GstCamera();
   const Texture2D& get_texture();
   void release_texture();
 };
