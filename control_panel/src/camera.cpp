@@ -1,6 +1,8 @@
 #include "camera.hpp"
+#include "spin_lock.hpp"
 #include <algorithm>
-#include <atomic>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <fmt/base.h>
@@ -9,6 +11,7 @@
 #include <gst/video/video-info.h>
 #include <memory>
 #include <raylib.h>
+#include <thread>
 #include <utility>
 
 constexpr std::string_view uri = "rtsp://127.0.0.1:8554/test\0";
@@ -58,46 +61,47 @@ exit:
 }
 
 void
-on_new_sample(GstElement* appsink, CameraBuffer* d_buf)
+on_new_sample(GstElement* appsink, SpinLock<CameraBuffer>& camera_buffer)
 {
   GstSample* sample;
   sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
-  GstBuffer* buf = gst_sample_get_buffer(sample);
-  GstCaps* caps = gst_sample_get_caps(sample);
-  GstVideoInfo info;
-  gst_video_info_from_caps(&info, caps);
-  GstMapInfo map;
-  if (gst_buffer_map(buf, &map, GST_MAP_READ)) {
+  if (sample != NULL) {
+    GstBuffer* buf = gst_sample_get_buffer(sample);
+    GstCaps* caps = gst_sample_get_caps(sample);
+    GstVideoInfo info;
+    gst_video_info_from_caps(&info, caps);
+    GstMapInfo map;
+    if (gst_buffer_map(buf, &map, GST_MAP_READ)) {
 
-    guint8* pixels = map.data;
-    int size = map.size;
-    int width = GST_VIDEO_INFO_WIDTH(&info);
-    int height = GST_VIDEO_INFO_HEIGHT(&info);
-    int stride = GST_VIDEO_INFO_PLANE_STRIDE(&info, 0);
-    int px_stride = GST_VIDEO_INFO_COMP_PSTRIDE(&info, 0);
+      guint8* pixels = map.data;
+      int size = map.size;
+      int width = GST_VIDEO_INFO_WIDTH(&info);
+      int height = GST_VIDEO_INFO_HEIGHT(&info);
+      int stride = GST_VIDEO_INFO_PLANE_STRIDE(&info, 0);
+      int px_stride = GST_VIDEO_INFO_COMP_PSTRIDE(&info, 0);
 
-    auto data = std::make_unique<uint8_t[]>(size);
-    for (int i = 0; i < height; i++) {
-      memcpy(data.get() + i * width * px_stride,
-             pixels + i * stride,
-             width * px_stride);
+      auto data = std::make_unique<uint8_t[]>(size);
+      for (int i = 0; i < height; i++) {
+        memcpy(data.get() + i * width * px_stride,
+               pixels + i * stride,
+               width * px_stride);
+      }
+
+      auto buffer_guard = camera_buffer.unlock();
+      buffer_guard.data.updated = true;
+      buffer_guard.data.dimesions = { width * px_stride, height };
+      std::swap(buffer_guard.data.data, data);
+
+      gst_buffer_unmap(buf, &map);
     }
-
-    while (d_buf->reading.exchange(true, std::memory_order::acquire)) {
-      // spin — someone else holds it
-    }
-    d_buf->updated = true;
-    d_buf->dimesions = { width * px_stride, height };
-    std::swap(d_buf->data, data);
-    d_buf->reading.store(false, std::memory_order::release);
-
-    gst_buffer_unmap(buf, &map);
+    gst_sample_unref(sample);
+  } else {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  gst_sample_unref(sample);
 }
 
-GstData::GstData(CameraBuffer* d_buf)
-  : d_buf(d_buf)
+GstData::GstData(SpinLock<CameraBuffer>& camera_buffer)
+  : camera_buffer(camera_buffer)
 {
   gst_init(NULL, NULL);
 
@@ -180,12 +184,14 @@ GstData::run()
   //   gst_message_unref(msg);
   // }
 
-  while (! should_close) {
-    on_new_sample(sink, d_buf);
+  while (!should_close) {
+    on_new_sample(sink, camera_buffer);
   }
 }
 
-void GstData::close_pipeline(){
+void
+GstData::close_pipeline()
+{
   ret = gst_element_set_state(pipeline, GST_STATE_NULL);
 
   if (ret == GST_STATE_CHANGE_FAILURE) {
@@ -197,8 +203,8 @@ void GstData::close_pipeline(){
 
 GstCamera::GstCamera(int width, int height)
   : texture(LoadTextureFromImage(GenImageColor(width, height, WHITE)))
-  , buffer()
-  , gst_data(&buffer)
+  , buffer(CameraBuffer())
+  , gst_data(buffer)
   , worker([this]() { gst_data.run(); })
 {
 }
@@ -232,34 +238,28 @@ center_feed(uint8_t original[], std::pair<int, int> dim, int edge)
 const Texture2D&
 GstCamera::get_texture()
 {
-  while (buffer.reading.exchange(true, std::memory_order::acquire)) {
-    // spin — someone else holds it
-  }
-  if (buffer.updated) {
-    if (buffer.dimesions.first == texture.width * 4 &&
-        buffer.dimesions.second == texture.height) {
-      UpdateTexture(texture, buffer.data.get());
+  auto guard = buffer.unlock();
+  if (guard.data.updated) {
+    if (guard.data.dimesions.first == texture.width * 4 &&
+        guard.data.dimesions.second == texture.height) {
+      UpdateTexture(texture, guard.data.data.get());
     } else {
-      int edge = std::max(buffer.dimesions.first / 4, buffer.dimesions.second);
+      int edge = std::max(guard.data.dimesions.first / 4, guard.data.dimesions.second);
       if (texture.height != edge || texture.width != edge) {
         UnloadTexture(texture);
         texture = LoadTextureFromImage(GenImageColor(edge, edge, WHITE));
       }
-      auto ptr = center_feed(buffer.data.get(), buffer.dimesions, edge);
+      auto ptr = center_feed(guard.data.data.get(), guard.data.dimesions, edge);
       UpdateTexture(texture, ptr.get());
     }
-    buffer.updated = false;
+    guard.data.updated = false;
   }
   return texture;
 }
 
-void
-GstCamera::release_texture()
-{
-  buffer.reading.store(false, std::memory_order::release);
-}
 
-GstCamera::~GstCamera(){
+GstCamera::~GstCamera()
+{
   gst_data.should_close = true;
   gst_data.close_pipeline();
 }

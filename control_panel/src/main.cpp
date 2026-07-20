@@ -5,20 +5,22 @@
 #include <thread>
 
 #include "camera.hpp"
+#include "spin_lock.hpp"
+#include "state.hpp"
 #include "ui.hpp"
 
 class Components final : protected Drawable
 {
   friend class App;
   void self_draw() override {};
-  Components(GstCamera& camera_texture);
+  Components(GstCamera& camera_texture, SpinLock<AppState>& state);
 };
 
-Components::Components(GstCamera& camera_texture)
+Components::Components(GstCamera& camera, SpinLock<AppState>& state)
   : Drawable(0, 0, UI::SCREEN_WIDTH, UI::SCREEN_HEIGHT)
 {
   children.push_back(std::make_unique<Map>());
-  children.push_back(std::make_unique<Feed>(camera_texture));
+  children.push_back(std::make_unique<Feed>(camera));
   children.push_back(std::make_unique<Controls>());
   children.push_back(std::make_unique<Warnings>());
 }
@@ -26,6 +28,7 @@ Components::Components(GstCamera& camera_texture)
 class App
 {
   GstCamera camera;
+  SpinLock<AppState> state;
   Components comp;
   std::array<std::jthread, 1> sub_threads;
 
@@ -36,7 +39,8 @@ public:
 
 App::App()
   : camera(UI::CAMERA_RES, UI::CAMERA_RES)
-  , comp(camera)
+  , state(AppState())
+  , comp(camera, state)
 {
 }
 

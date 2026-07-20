@@ -1,5 +1,4 @@
 #pragma once
-#include "camera.hpp"
 #include <array>
 #include <fmt/base.h>
 #include <memory>
@@ -7,13 +6,15 @@
 #include <string>
 #include <vector>
 
+#include "camera.hpp"
+#include "state.hpp"
+
 namespace UI {
 constexpr int CELLS_NUM = 20;
 constexpr int SCREEN_HEIGHT = 800;
 constexpr int SCREEN_WIDTH = 1280;
 constexpr int APP_PAD = 4;
-constexpr int MAP_HEIGHT =
-  static_cast<int>(0.9 * SCREEN_HEIGHT - 2 * APP_PAD);
+constexpr int MAP_HEIGHT = static_cast<int>(0.9 * SCREEN_HEIGHT - 2 * APP_PAD);
 constexpr int MAP_WIDTH = static_cast<int>(0.7 * SCREEN_WIDTH - 2 * APP_PAD);
 constexpr int MAP_X = static_cast<int>(0.3 * SCREEN_WIDTH + APP_PAD);
 constexpr int MAP_Y = APP_PAD;
@@ -135,13 +136,21 @@ class Feed final : public Section
 {
 
 public:
-  Feed(GstCamera& camera_texture);
+  Feed(GstCamera& camera);
 };
 
 class Controls final : public Section
 {
+
 public:
   Controls();
+};
+
+class ThrustControls final : public Section
+{
+
+public:
+  ThrustControls(Rectangle rec, AppState& state);
 };
 
 class Warnings final : public Section

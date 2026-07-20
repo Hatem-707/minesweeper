@@ -1,5 +1,4 @@
 #pragma once
-#include <atomic>
 #include <cstdint>
 #include <gst/app/app.h>
 #include <gst/gst.h>
@@ -9,10 +8,11 @@
 #include <thread>
 #include <utility>
 
+#include "spin_lock.hpp"
+
 struct CameraBuffer
 {
   bool updated{ false };
-  alignas(64) std::atomic<bool> reading{ false };
   std::pair<int, int> dimesions;
   std::unique_ptr<uint8_t[]> data;
 };
@@ -23,8 +23,8 @@ struct GstData
   GstBus* bus;
   GstMessage* msg;
   GstStateChangeReturn ret;
-  CameraBuffer* d_buf;
-  GstData(CameraBuffer*);
+  SpinLock<CameraBuffer>& camera_buffer;
+  GstData(SpinLock<CameraBuffer>& d_buf);
   bool should_close{ false };
   void close_pipeline();
   ~GstData();
@@ -34,7 +34,7 @@ struct GstData
 class GstCamera
 {
   Texture2D texture;
-  CameraBuffer buffer;
+  SpinLock<CameraBuffer> buffer;
   GstData gst_data;
   std::jthread worker;
 
@@ -42,5 +42,4 @@ public:
   GstCamera(int width, int height);
   ~GstCamera();
   const Texture2D& get_texture();
-  void release_texture();
 };

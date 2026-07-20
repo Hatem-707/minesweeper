@@ -142,7 +142,6 @@ CameraFeed::self_draw()
   Texture2D texture = camera.get_texture();
   float scale = rec.width / texture.width;
   DrawTextureEx(texture, { rec.x, rec.y }, 0, scale, WHITE);
-  camera.release_texture();
 }
 
 Feed::Feed(GstCamera& camera)
@@ -182,5 +181,6 @@ Warnings::Warnings()
             COLORS::orange)
 {
   Rectangle rec = get_rec(UI::SECTION_PAD);
-  children.push_back(std::make_unique<MapCell>(rec.x, rec.y, rec.width, rec.height));
+  children.push_back(
+    std::make_unique<MapCell>(rec.x, rec.y, rec.width, rec.height));
 }
