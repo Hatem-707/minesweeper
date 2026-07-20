@@ -11,8 +11,9 @@ namespace UI {
 constexpr int CELLS_NUM = 20;
 constexpr int SCREEN_HEIGHT = 800;
 constexpr int SCREEN_WIDTH = 1280;
-constexpr int APP_PAD = 16;
-constexpr int MAP_HEIGHT = static_cast<int>(0.9 * SCREEN_HEIGHT - 2 * APP_PAD);
+constexpr int APP_PAD = 4;
+constexpr int MAP_HEIGHT =
+  static_cast<int>(0.9 * SCREEN_HEIGHT - 2 * APP_PAD);
 constexpr int MAP_WIDTH = static_cast<int>(0.7 * SCREEN_WIDTH - 2 * APP_PAD);
 constexpr int MAP_X = static_cast<int>(0.3 * SCREEN_WIDTH + APP_PAD);
 constexpr int MAP_Y = APP_PAD;
@@ -30,6 +31,11 @@ constexpr int CONTROLS_Y = FEED_HEIGHT + FEED_Y;
 constexpr int CONTROLS_HEIGHT = FEED_HEIGHT;
 constexpr int CONTROLS_WIDTH = FEED_WIDTH;
 constexpr int CAMERA_RES = 720;
+constexpr int WARNINGS_HEIGHT =
+  static_cast<int>(0.1 * (SCREEN_HEIGHT - 2 * APP_PAD));
+constexpr int WARNINGS_WIDTH = SCREEN_WIDTH - 2 * APP_PAD;
+constexpr int WARNINGS_X = APP_PAD;
+constexpr int WARNINGS_Y = APP_PAD + MAP_HEIGHT;
 }
 
 namespace COLORS {
@@ -60,8 +66,6 @@ public:
   virtual void self_draw() = 0;
   Rectangle get_rec(int pad = 0);
 };
-
-
 
 class Section : public Drawable
 {
@@ -138,4 +142,10 @@ class Controls final : public Section
 {
 public:
   Controls();
+};
+
+class Warnings final : public Section
+{
+public:
+  Warnings();
 };

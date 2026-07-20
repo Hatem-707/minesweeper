@@ -1,5 +1,6 @@
 #include <array>
 #include <fmt/base.h>
+#include <memory>
 #include <raylib.h>
 #include <thread>
 
@@ -19,6 +20,7 @@ Components::Components(GstCamera& camera_texture)
   children.push_back(std::make_unique<Map>());
   children.push_back(std::make_unique<Feed>(camera_texture));
   children.push_back(std::make_unique<Controls>());
+  children.push_back(std::make_unique<Warnings>());
 }
 
 class App

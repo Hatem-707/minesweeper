@@ -52,6 +52,7 @@ Section::Section(int x,
 Rectangle
 Section::get_title_rec()
 {
+
   int width = MeasureText(name.c_str(), UI::TEXT_SIZE) + UI::TEXT_PAD * 2;
   int height = UI::TEXT_SIZE;
   int x = this->x + this->width / 2 - width / 2;
@@ -170,4 +171,16 @@ Controls::Controls()
             "Controls",
             COLORS::blue)
 {
+}
+
+Warnings::Warnings()
+  : Section(UI::WARNINGS_X,
+            UI::WARNINGS_Y,
+            UI::WARNINGS_WIDTH,
+            UI::WARNINGS_HEIGHT,
+            "Warnings & Messages",
+            COLORS::orange)
+{
+  Rectangle rec = get_rec(UI::SECTION_PAD);
+  children.push_back(std::make_unique<MapCell>(rec.x, rec.y, rec.width, rec.height));
 }
