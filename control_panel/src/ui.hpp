@@ -4,9 +4,12 @@
 #include <memory>
 #include <raylib.h>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "camera.hpp"
+#include "spin_lock.hpp"
 #include "state.hpp"
 
 namespace UI {
@@ -22,7 +25,8 @@ constexpr int SECTION_PAD = 20;
 constexpr int CELL_PAD = 2;
 constexpr float DEFAULT_ROUNDNESS = 0.025;
 constexpr int TEXT_PAD = 8;
-constexpr int TEXT_SIZE = 20;
+constexpr int TITLE_FONT = 24;
+constexpr int ELE_FONT = 20;
 constexpr int FEED_X = APP_PAD;
 constexpr int FEED_Y = APP_PAD;
 constexpr int FEED_WIDTH = static_cast<int>(0.3 * SCREEN_WIDTH - 2 * APP_PAD);
@@ -139,18 +143,43 @@ public:
   Feed(GstCamera& camera);
 };
 
-class Controls final : public Section
+class SliderThrust final : public Drawable
 {
+  SpinLock<AppState>& state;
+  void self_draw() override;
 
 public:
-  Controls();
+  SliderThrust(Rectangle rec, SpinLock<AppState>& state);
 };
 
 class ThrustControls final : public Section
 {
 
 public:
-  ThrustControls(Rectangle rec, AppState& state);
+  ThrustControls(Rectangle rec, SpinLock<AppState>& state);
+};
+
+class TableControls final : public Drawable
+{
+  SpinLock<AppState>& state;
+  void self_draw() override;
+  std::array<std::string_view, 3> first_column = { "Health:",
+                                                   "Pos_x :",
+                                                   "Speed :" };
+  std::array<std::string_view, 3> second_column = { "Magnet:",
+                                                    "Pos_y :",
+                                                    "Orien :" };
+  std::pair<int, int> get_entry_pos(int x, int y);
+
+public:
+  TableControls(Rectangle rec, SpinLock<AppState>& state);
+};
+
+class Controls final : public Section
+{
+
+public:
+  Controls(SpinLock<AppState>& state);
 };
 
 class Warnings final : public Section

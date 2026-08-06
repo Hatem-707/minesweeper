@@ -14,7 +14,7 @@ struct CameraBuffer
 {
   bool updated{ false };
   std::pair<int, int> dimesions;
-  std::unique_ptr<uint8_t[]> data;
+  std::unique_ptr<uint8_t[]> pixel_ptr;
 };
 
 struct GstData

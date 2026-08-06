@@ -7,7 +7,10 @@
 #include <cstring>
 #include <fmt/base.h>
 #include <glib-object.h>
+#include <gst/app/gstappsink.h>
+#include <gst/gstclock.h>
 #include <gst/gstelement.h>
+#include <gst/gstpad.h>
 #include <gst/video/video-info.h>
 #include <memory>
 #include <raylib.h>
@@ -25,7 +28,7 @@ on_pad_added(GstElement*, GstPad* new_pad, GstElement* convert)
   GstStructure* new_pad_struct = NULL;
   const gchar* new_pad_type = NULL;
 
-  g_print("A new pad added");
+  fmt::println("A new pad added");
 
   sink_pad = gst_element_get_static_pad(convert, "sink");
   new_pad_caps = gst_pad_get_current_caps(new_pad);
@@ -33,7 +36,7 @@ on_pad_added(GstElement*, GstPad* new_pad, GstElement* convert)
   new_pad_type = gst_structure_get_name(new_pad_struct);
 
   if (!g_str_has_prefix(new_pad_type, "video/x-raw")) {
-    g_print("skipping pad: %s \n", new_pad_type);
+    fmt::println("skipping pad: {} ", new_pad_type);
     goto exit;
   }
 
@@ -45,9 +48,9 @@ on_pad_added(GstElement*, GstPad* new_pad, GstElement* convert)
   ret = gst_pad_link(new_pad, sink_pad);
 
   if (GST_PAD_LINK_FAILED(ret)) {
-    g_print("Type is '%s' but link failed.\n", new_pad_type);
+    fmt::println("Type is {} but link failed.", new_pad_type);
   } else {
-    g_print("Link succeeded (type '%s').\n", new_pad_type);
+    fmt::println("Link succeeded (type {}).", new_pad_type);
   }
 
 exit:
@@ -60,11 +63,12 @@ exit:
     gst_object_unref(sink_pad);
 }
 
-void
+bool
 on_new_sample(GstElement* appsink, SpinLock<CameraBuffer>& camera_buffer)
 {
   GstSample* sample;
-  sample = gst_app_sink_pull_sample(GST_APP_SINK(appsink));
+  sample =
+    gst_app_sink_try_pull_sample(GST_APP_SINK(appsink), 100 * GST_MSECOND);
   if (sample != NULL) {
     GstBuffer* buf = gst_sample_get_buffer(sample);
     GstCaps* caps = gst_sample_get_caps(sample);
@@ -90,14 +94,16 @@ on_new_sample(GstElement* appsink, SpinLock<CameraBuffer>& camera_buffer)
       auto buffer_guard = camera_buffer.unlock();
       buffer_guard.data.updated = true;
       buffer_guard.data.dimesions = { width * px_stride, height };
-      std::swap(buffer_guard.data.data, data);
+      std::swap(buffer_guard.data.pixel_ptr, data);
 
       gst_buffer_unmap(buf, &map);
     }
     gst_sample_unref(sample);
   } else {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // fmt::println("Null sample");
+    return false;
   }
+  return true;
 }
 
 GstData::GstData(SpinLock<CameraBuffer>& camera_buffer)
@@ -149,43 +155,62 @@ GstData::run()
 
   if (ret == GST_STATE_CHANGE_FAILURE) {
     gst_object_unref(pipeline);
+    fmt::println("error connecting");
     throw std::runtime_error(
       "Unable to set the pipeline to the playing state.");
   }
 
   bus = gst_element_get_bus(pipeline);
-  // msg = gst_bus_timed_pop_filtered(
-  //   bus,
-  //   GST_CLOCK_TIME_NONE,
-  //   (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
-  // if (msg != NULL) {
-  //   GError* err;
-  //   gchar* debug_info;
-
-  //   switch (GST_MESSAGE_TYPE(msg)) {
-  //     case GST_MESSAGE_ERROR:
-  //       gst_message_parse_error(msg, &err, &debug_info);
-  //       g_printerr("Error received from element %s: %s\n",
-  //                  GST_OBJECT_NAME(msg->src),
-  //                  err->message);
-  //       g_printerr("Debugging information: %s\n",
-  //                  debug_info ? debug_info : "none");
-  //       g_clear_error(&err);
-  //       g_free(debug_info);
-  //       break;
-
-  //     case GST_MESSAGE_EOS:
-  //       g_print("End-Of-Stream reached.\n");
-  //       break;
-  //     default:
-  //       /* We should not reach here */
-  //       g_printerr("Unexpected message received.\n");
-  //   }
-  //   gst_message_unref(msg);
-  // }
 
   while (!should_close) {
-    on_new_sample(sink, camera_buffer);
+    if (!on_new_sample(sink, camera_buffer)) {
+      msg = gst_bus_timed_pop_filtered(
+        bus,
+        100 * GST_MSECOND,
+        (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+      if (msg != NULL) {
+        GError* err;
+        gchar* debug_info;
+
+        switch (GST_MESSAGE_TYPE(msg)) {
+          case GST_MESSAGE_ERROR:
+            gst_message_parse_error(msg, &err, &debug_info);
+            fmt::println("Error received from element {}: {}",
+                         GST_OBJECT_NAME(msg->src),
+                         err->message);
+            fmt::println("Debugging information: {}",
+                         debug_info ? debug_info : "none");
+            g_clear_error(&err);
+            g_free(debug_info);
+            // most probable cause is a stream yet to launch
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            ret = gst_element_set_state(pipeline, GST_STATE_NULL);
+            if (ret == GST_STATE_CHANGE_FAILURE) {
+              gst_object_unref(pipeline);
+              fmt::println("error connecting");
+              throw std::runtime_error(
+                "Unable to set the pipeline to the playing state.");
+            }
+            ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
+            if (ret == GST_STATE_CHANGE_FAILURE) {
+              gst_object_unref(pipeline);
+              fmt::println("error connecting");
+              throw std::runtime_error(
+                "Unable to set the pipeline to the playing state.");
+            }
+
+            break;
+
+          case GST_MESSAGE_EOS:
+            fmt::println("End-Of-Stream reached.");
+            break;
+          default:
+            /* We should not reach here */
+            fmt::println("Unexpected message received.");
+        }
+        gst_message_unref(msg);
+      }
+    }
   }
 }
 
@@ -242,21 +267,22 @@ GstCamera::get_texture()
   if (guard.data.updated) {
     if (guard.data.dimesions.first == texture.width * 4 &&
         guard.data.dimesions.second == texture.height) {
-      UpdateTexture(texture, guard.data.data.get());
+      UpdateTexture(texture, guard.data.pixel_ptr.get());
     } else {
-      int edge = std::max(guard.data.dimesions.first / 4, guard.data.dimesions.second);
+      int edge =
+        std::max(guard.data.dimesions.first / 4, guard.data.dimesions.second);
       if (texture.height != edge || texture.width != edge) {
         UnloadTexture(texture);
         texture = LoadTextureFromImage(GenImageColor(edge, edge, WHITE));
       }
-      auto ptr = center_feed(guard.data.data.get(), guard.data.dimesions, edge);
+      auto ptr =
+        center_feed(guard.data.pixel_ptr.get(), guard.data.dimesions, edge);
       UpdateTexture(texture, ptr.get());
     }
     guard.data.updated = false;
   }
   return texture;
 }
-
 
 GstCamera::~GstCamera()
 {

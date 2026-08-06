@@ -1,5 +1,11 @@
 #include "ui.hpp"
 #include "camera.hpp"
+#include "spin_lock.hpp"
+#include "state.hpp"
+#include <fmt/format.h>
+#include <memory>
+#include <raylib.h>
+#include <string>
 
 Drawable::Drawable(int x, int y, int width, int height)
   : x(x)
@@ -53,8 +59,8 @@ Rectangle
 Section::get_title_rec()
 {
 
-  int width = MeasureText(name.c_str(), UI::TEXT_SIZE) + UI::TEXT_PAD * 2;
-  int height = UI::TEXT_SIZE;
+  int width = MeasureText(name.c_str(), UI::TITLE_FONT) + UI::TEXT_PAD * 2;
+  int height = UI::TITLE_FONT;
   int x = this->x + this->width / 2 - width / 2;
   int y = this->y;
   return { static_cast<float>(x),
@@ -73,7 +79,7 @@ Section::self_draw()
   DrawText(name.c_str(),
            rec.x + UI::TEXT_PAD,
            rec.y + UI::SECTION_PAD / 2 - rec.height / 2,
-           UI::TEXT_SIZE,
+           UI::TITLE_FONT,
            color);
 }
 
@@ -162,7 +168,79 @@ Feed::Feed(GstCamera& camera)
   children.push_back(std::move(feed));
 }
 
-Controls::Controls()
+SliderThrust::SliderThrust(Rectangle rec, SpinLock<AppState>& state)
+  : Drawable(rec)
+  , state(state)
+{
+}
+
+void
+SliderThrust::self_draw()
+{
+  DrawRectangleRec(get_rec(), COLORS::green);
+}
+
+ThrustControls::ThrustControls(Rectangle rec, SpinLock<AppState>& state)
+  : Section(rec.x, rec.y, rec.width, rec.height, "Thrust", COLORS::red)
+{
+  Rectangle drawing_rec = get_rec(UI::SECTION_PAD);
+  children.push_back(std::make_unique<SliderThrust>(drawing_rec, state));
+}
+
+TableControls::TableControls(Rectangle rec, SpinLock<AppState>& state)
+  : Drawable(rec)
+  , state(state)
+{
+}
+
+std::pair<int, int>
+TableControls::get_entry_pos(int x, int y)
+{
+  Rectangle rec = get_rec(UI::SECTION_PAD / 2);
+  float width = rec.width / 2;
+  float height = rec.height / 3;
+  return { rec.x + x * width, rec.y + y * height };
+}
+
+void
+TableControls::self_draw()
+{
+
+  std::string health, pos_x, pos_y, magnet, speed, heading;
+  {
+    auto gaurd = state.unlock();
+    health = fmt::format("{0}{1:>7.3f}", first_column[0], gaurd.data.health);
+    pos_x = fmt::format("{0}{1:>7.3f}", first_column[1], gaurd.data.pos_x);
+    speed = fmt::format("{0}{1:>7.3f}", first_column[2], gaurd.data.speed);
+    magnet = fmt::format("{0}{1:>7}", second_column[0], gaurd.data.magnet);
+    pos_y = fmt::format("{0}{1:>7.3f}", second_column[1], gaurd.data.pos_y);
+    heading = fmt::format("{0}{1:>7.3f}", second_column[2], gaurd.data.heading);
+  }
+  auto health_pos = get_entry_pos(0, 0);
+  auto pos_x_pos = get_entry_pos(0, 1);
+  auto speed_pos = get_entry_pos(0, 2);
+  auto magnet_pos = get_entry_pos(1, 0);
+  auto pos_y_pos = get_entry_pos(1, 1);
+  auto heading_pos = get_entry_pos(1, 2);
+
+  DrawText(
+    health.c_str(), health_pos.first, health_pos.second, UI::ELE_FONT, BLACK);
+  DrawText(
+    pos_x.c_str(), pos_x_pos.first, pos_x_pos.second, UI::ELE_FONT, BLACK);
+  DrawText(
+    speed.c_str(), speed_pos.first, speed_pos.second, UI::ELE_FONT, BLACK);
+  DrawText(
+    magnet.c_str(), magnet_pos.first, magnet_pos.second, UI::ELE_FONT, BLACK);
+  DrawText(
+    pos_y.c_str(), pos_y_pos.first, pos_y_pos.second, UI::ELE_FONT, BLACK);
+  DrawText(heading.c_str(),
+           heading_pos.first,
+           heading_pos.second,
+           UI::ELE_FONT,
+           BLACK);
+}
+
+Controls::Controls(SpinLock<AppState>& state)
   : Section(UI::CONTROLS_X,
             UI::CONTROLS_Y,
             UI::CONTROLS_WIDTH,
@@ -170,6 +248,12 @@ Controls::Controls()
             "Controls",
             COLORS::blue)
 {
+  const auto& [x, y, width, height] = get_rec(UI::SECTION_PAD);
+  Rectangle table_rec = { x, y, width, height * 0.75f };
+  Rectangle thrust_rec = { x, y + 0.75f * height, width, 0.25f * height };
+
+  children.push_back(std::make_unique<TableControls>(table_rec, state));
+  children.push_back(std::make_unique<ThrustControls>(thrust_rec, state));
 }
 
 Warnings::Warnings()
