@@ -23,6 +23,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(raylib REQUIRED)
 find_package(fmt REQUIRED)
 find_package(PkgConfig REQUIRED)
+find_package(ZeroMQ REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(gtk3 REQUIRED IMPORTED_TARGET gtk+-3.0)
@@ -47,4 +48,5 @@ target_link_libraries(${PROJECT_NAME}
                       PkgConfig::gstreamer
                       PkgConfig::gstreamer-app
                       PkgConfig::gstreamer-video
+                      libzmq
 )

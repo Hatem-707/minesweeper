@@ -4,13 +4,16 @@
 template<typename T>
 class SpinLockGuard
 {
+  template<typename U>
+  friend class SpinLock;
+
 public:
   T& data;
+  ~SpinLockGuard() { flag.exchange(false, std::memory_order::release); }
 
 private:
   std::atomic<bool>& flag;
 
-public:
   SpinLockGuard(T& data, std::atomic<bool>& flag)
     : data(data)
     , flag(flag)
@@ -18,7 +21,6 @@ public:
     while (flag.exchange(true, std::memory_order::acquire)) {
     }
   }
-  ~SpinLockGuard() { flag.exchange(false, std::memory_order::release); }
 };
 
 template<typename T>

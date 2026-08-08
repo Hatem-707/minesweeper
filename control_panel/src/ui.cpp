@@ -2,6 +2,7 @@
 #include "camera.hpp"
 #include "spin_lock.hpp"
 #include "state.hpp"
+#include <cstdlib>
 #include <fmt/format.h>
 #include <memory>
 #include <raylib.h>
@@ -177,7 +178,17 @@ SliderThrust::SliderThrust(Rectangle rec, SpinLock<AppState>& state)
 void
 SliderThrust::self_draw()
 {
-  DrawRectangleRec(get_rec(), COLORS::green);
+  auto rec = get_rec(UI::SECTION_PAD / 4);
+  DrawRectangleRoundedLinesEx(rec, UI::DEFAULT_ROUNDNESS, 128, 4, COLORS::grey);
+  DrawRectangleRounded(
+    { rec.x,
+      rec.y,
+      rec.width * static_cast<float>(std::abs(state.unlock().data.thrust)) /
+        255.f,
+      rec.height },
+    UI::DEFAULT_ROUNDNESS,
+    128,
+    COLORS::red);
 }
 
 ThrustControls::ThrustControls(Rectangle rec, SpinLock<AppState>& state)

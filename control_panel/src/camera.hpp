@@ -5,6 +5,7 @@
 #include <gst/video/video.h>
 #include <memory>
 #include <raylib.h>
+#include <stop_token>
 #include <thread>
 #include <utility>
 
@@ -25,10 +26,9 @@ struct GstData
   GstStateChangeReturn ret;
   SpinLock<CameraBuffer>& camera_buffer;
   GstData(SpinLock<CameraBuffer>& d_buf);
-  bool should_close{ false };
   void close_pipeline();
   ~GstData();
-  void run();
+  void run(std::stop_token stop);
 };
 
 class GstCamera

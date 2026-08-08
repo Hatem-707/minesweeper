@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 #include <fmt/base.h>
 #include <memory>
 #include <random>
@@ -33,7 +34,6 @@ class App
   Components comp;
   bool should_close{ false };
   std::jthread test_thread;
-  
 
 public:
   App();
@@ -49,15 +49,17 @@ App::App()
     auto angle = std::uniform_real_distribution<>(-180.f, 180);
     auto pos = std::uniform_real_distribution<>(0, 20);
     auto health = std::uniform_real_distribution<>(0, 1);
+    auto thrust = std::uniform_int_distribution<int16_t>(-255, 255);
     auto gen = std::random_device();
     while (!should_close) {
       {
         auto guard = state.unlock();
-        guard.data.heading =  angle(gen);
+        guard.data.heading = angle(gen);
         guard.data.pos_x = pos(gen);
         guard.data.pos_y = pos(gen);
         guard.data.speed = pos(gen);
         guard.data.health = health(gen);
+        guard.data.thrust = thrust(gen);
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -65,7 +67,8 @@ App::App()
 {
 }
 
-App::~App(){
+App::~App()
+{
   should_close = true;
 }
 

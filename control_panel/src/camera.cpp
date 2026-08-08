@@ -14,6 +14,7 @@
 #include <gst/video/video-info.h>
 #include <memory>
 #include <raylib.h>
+#include <stop_token>
 #include <thread>
 #include <utility>
 
@@ -83,18 +84,37 @@ on_new_sample(GstElement* appsink, SpinLock<CameraBuffer>& camera_buffer)
       int height = GST_VIDEO_INFO_HEIGHT(&info);
       int stride = GST_VIDEO_INFO_PLANE_STRIDE(&info, 0);
       int px_stride = GST_VIDEO_INFO_COMP_PSTRIDE(&info, 0);
+      bool should_allocate = true;
 
-      auto data = std::make_unique<uint8_t[]>(size);
-      for (int i = 0; i < height; i++) {
-        memcpy(data.get() + i * width * px_stride,
-               pixels + i * stride,
-               width * px_stride);
+      {
+        auto guard = camera_buffer.unlock();
+        if (guard.data.dimesions.first == width * px_stride &&
+            guard.data.dimesions.second == height) {
+          should_allocate = false;
+        }
       }
 
-      auto buffer_guard = camera_buffer.unlock();
-      buffer_guard.data.updated = true;
-      buffer_guard.data.dimesions = { width * px_stride, height };
-      std::swap(buffer_guard.data.pixel_ptr, data);
+      if (should_allocate) [[unlikely]] {
+        auto data_ptr = std::make_unique<uint8_t[]>(size);
+        for (int i = 0; i < height; i++) {
+          memcpy(data_ptr.get() + i * width * px_stride,
+                 pixels + i * stride,
+                 width * px_stride);
+        }
+        auto buffer_guard = camera_buffer.unlock();
+        buffer_guard.data.updated = true;
+        buffer_guard.data.dimesions = { width * px_stride, height };
+        std::swap(buffer_guard.data.pixel_ptr, data_ptr);
+      } else [[likely]] {
+        auto buffer_guard = camera_buffer.unlock();
+        auto& data_ptr = buffer_guard.data.pixel_ptr;
+        for (int i = 0; i < height; i++) {
+          memcpy(data_ptr.get() + i * width * px_stride,
+                 pixels + i * stride,
+                 width * px_stride);
+        }
+        buffer_guard.data.updated = true;
+      }
 
       gst_buffer_unmap(buf, &map);
     }
@@ -149,7 +169,7 @@ GstData::~GstData()
 }
 
 void
-GstData::run()
+GstData::run(std::stop_token stop)
 {
   ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
@@ -162,7 +182,7 @@ GstData::run()
 
   bus = gst_element_get_bus(pipeline);
 
-  while (!should_close) {
+  while (!stop.stop_requested()) {
     if (!on_new_sample(sink, camera_buffer)) {
       msg = gst_bus_timed_pop_filtered(
         bus,
@@ -230,7 +250,7 @@ GstCamera::GstCamera(int width, int height)
   : texture(LoadTextureFromImage(GenImageColor(width, height, WHITE)))
   , buffer(CameraBuffer())
   , gst_data(buffer)
-  , worker([this]() { gst_data.run(); })
+  , worker([this]() { gst_data.run(worker.get_stop_token()); })
 {
 }
 
@@ -286,6 +306,5 @@ GstCamera::get_texture()
 
 GstCamera::~GstCamera()
 {
-  gst_data.should_close = true;
   gst_data.close_pipeline();
 }
