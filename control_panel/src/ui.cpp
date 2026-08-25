@@ -79,7 +79,7 @@ Section::self_draw()
   DrawRectangleRec(rec, COLORS::background);
   DrawText(name.c_str(),
            rec.x + UI::TEXT_PAD,
-           rec.y + UI::SECTION_PAD / 2 - rec.height / 2,
+           rec.y + UI::SECTION_PAD / 2.f - rec.height / 2,
            UI::TITLE_FONT,
            color);
 }

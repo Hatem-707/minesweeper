@@ -4,6 +4,7 @@
 #include <memory>
 #include <random>
 #include <raylib.h>
+#include <stop_token>
 #include <thread>
 
 #include "camera.hpp"
@@ -32,12 +33,10 @@ class App
   GstCamera camera;
   SpinLock<AppState> state;
   Components comp;
-  bool should_close{ false };
   std::jthread test_thread;
 
 public:
   App();
-  ~App();
   void run();
 };
 
@@ -45,13 +44,13 @@ App::App()
   : camera(UI::CAMERA_RES, UI::CAMERA_RES)
   , state(AppState())
   , comp(camera, state)
-  , test_thread([this]() {
+  , test_thread([this](std::stop_token stop) {
     auto angle = std::uniform_real_distribution<>(-180.f, 180);
     auto pos = std::uniform_real_distribution<>(0, 20);
     auto health = std::uniform_real_distribution<>(0, 1);
     auto thrust = std::uniform_int_distribution<int16_t>(-255, 255);
     auto gen = std::random_device();
-    while (!should_close) {
+    while (!stop.stop_requested()) {
       {
         auto guard = state.unlock();
         guard.data.heading = angle(gen);
@@ -67,10 +66,6 @@ App::App()
 {
 }
 
-App::~App()
-{
-  should_close = true;
-}
 
 void
 App::run()
