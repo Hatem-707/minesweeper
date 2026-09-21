@@ -1,2 +1,13 @@
 toml11/
 third_party/
+
+# STM32CubeIDE build output
+minesweeper_firmware/Debug/
+*.o
+*.elf
+*.map
+*.su
+*.cyclo
+
+# VS Code browse database
+**/.vscode/browse.vc.db*
