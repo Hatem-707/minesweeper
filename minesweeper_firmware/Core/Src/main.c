@@ -17,12 +17,15 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#include "main.h"
+#include "../Inc/main.h"
 #include <string.h>
+#include <stddef.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "../Inc/mpu6050.h"
+#include "../Inc/cobs.h"
+#include "../Inc/protocol.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,16 +59,32 @@ DMA_HandleTypeDef hdma_usart2_rx;
 /* USER CODE BEGIN PV */
 
 #define UART2_RX_BUFFER_SIZE 128U
+#define TELEMETRY_PERIOD_MS 20U
+#define COMMAND_WATCHDOG_MS 250U
+#define METAL_DETECTOR_OVERSAMPLE_COUNT 8U
+#define UART2_TX_BUFFER_SIZE (COBS_MAX_ENCODED_SIZE(sizeof(TelemetryPacket_t)) + 1U)
 
 static uint8_t uart2_rx_buffer[UART2_RX_BUFFER_SIZE];
-static uint8_t uart2_tx_buffer[UART2_RX_BUFFER_SIZE];
+static uint8_t uart2_tx_buffer[UART2_TX_BUFFER_SIZE];
 static volatile uint16_t uart2_rx_length;
 static volatile uint8_t uart2_rx_ready;
 static volatile uint8_t uart2_tx_busy;
 
+static MPU6050_Data_t mpu6050_data;
+static uint32_t telemetry_last_tick;
+static uint8_t telemetry_seq;
+
+static volatile int16_t command_left_duty;
+static volatile int16_t command_right_duty;
+static volatile uint32_t command_last_tick;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
+static uint16_t Read_Metal_Detector(void);
+static void Apply_Motor_Command(int16_t left_duty, int16_t right_duty);
+static void Process_Command_Frame(const uint8_t *frame, size_t len);
+static void Send_Telemetry(void);
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
@@ -81,6 +100,92 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static uint16_t Read_Metal_Detector(void)
+{
+  uint32_t accumulator = 0U;
+
+  for (uint32_t i = 0U; i < METAL_DETECTOR_OVERSAMPLE_COUNT; i++)
+  {
+    HAL_ADC_Start(&hadc1);
+    if (HAL_ADC_PollForConversion(&hadc1, 10U) == HAL_OK)
+    {
+      accumulator += HAL_ADC_GetValue(&hadc1);
+    }
+    HAL_ADC_Stop(&hadc1);
+  }
+
+  return (uint16_t)(accumulator / METAL_DETECTOR_OVERSAMPLE_COUNT);
+}
+
+/* TODO: drive TIM1 CCRx duty + E_EN1/R_EN2/L_EN1/L_EN2 direction pins once
+ * the H-bridge wiring/polarity is confirmed. Left at a stub so the watchdog
+ * has a safe (no-op today, zero-PWM once wired) target to call. */
+static void Apply_Motor_Command(int16_t left_duty, int16_t right_duty)
+{
+  (void)left_duty;
+  (void)right_duty;
+}
+
+static void Process_Command_Frame(const uint8_t *frame, size_t len)
+{
+  uint8_t decoded[sizeof(CommandPacket_t)];
+  size_t decoded_len = cobs_decode(frame, len, decoded);
+  CommandPacket_t cmd;
+  uint8_t crc;
+
+  if (decoded_len != sizeof(CommandPacket_t))
+  {
+    return;
+  }
+
+  memcpy(&cmd, decoded, sizeof(cmd));
+
+  crc = protocol_crc8((const uint8_t *)&cmd, offsetof(CommandPacket_t, crc));
+  if (crc != cmd.crc)
+  {
+    return;
+  }
+
+  command_left_duty = cmd.left_duty;
+  command_right_duty = cmd.right_duty;
+  command_last_tick = HAL_GetTick();
+
+  Apply_Motor_Command(cmd.left_duty, cmd.right_duty);
+}
+
+static void Send_Telemetry(void)
+{
+  TelemetryPacket_t packet;
+  size_t encoded_len;
+
+  if (MPU6050_ReadAll(&hi2c1, MPU6050_ADDR_DEFAULT, &mpu6050_data) != HAL_OK)
+  {
+    return;
+  }
+
+  packet.seq = telemetry_seq++;
+  packet.encoder_left = (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(&htim4);
+  packet.encoder_right = (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(&htim3);
+  packet.metal_detector_raw = Read_Metal_Detector();
+  packet.accel_x_raw = mpu6050_data.accel_x_raw;
+  packet.accel_y_raw = mpu6050_data.accel_y_raw;
+  packet.accel_z_raw = mpu6050_data.accel_z_raw;
+  packet.gyro_x_raw = mpu6050_data.gyro_x_raw;
+  packet.gyro_y_raw = mpu6050_data.gyro_y_raw;
+  packet.gyro_z_raw = mpu6050_data.gyro_z_raw;
+  packet.crc = protocol_crc8((const uint8_t *)&packet, offsetof(TelemetryPacket_t, crc));
+
+  encoded_len = cobs_encode((const uint8_t *)&packet, sizeof(packet), uart2_tx_buffer);
+  uart2_tx_buffer[encoded_len++] = 0x00U; /* frame delimiter */
+
+  uart2_tx_busy = 1U;
+  if (HAL_UART_Transmit_DMA(&huart2, uart2_tx_buffer, (uint16_t)encoded_len) != HAL_OK)
+  {
+    uart2_tx_busy = 0U;
+    Error_Handler();
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -128,6 +233,13 @@ int main(void)
     Error_Handler();
   }
 
+  if (MPU6050_Init(&hi2c1, MPU6050_ADDR_DEFAULT) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  telemetry_last_tick = HAL_GetTick();
+  command_last_tick = HAL_GetTick();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -137,9 +249,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (uart2_rx_ready != 0U && uart2_tx_busy == 0U)
+    if (uart2_rx_ready != 0U)
     {
+      uint8_t frame_copy[UART2_RX_BUFFER_SIZE];
       uint16_t rx_length = uart2_rx_length;
+      size_t frame_start = 0U;
+      size_t i;
 
       if (rx_length > UART2_RX_BUFFER_SIZE)
       {
@@ -147,16 +262,34 @@ int main(void)
       }
 
       __disable_irq();
-      memcpy(uart2_tx_buffer, uart2_rx_buffer, rx_length);
+      memcpy(frame_copy, uart2_rx_buffer, rx_length);
       uart2_rx_ready = 0U;
-      uart2_tx_busy = 1U;
       __enable_irq();
 
-      if (HAL_UART_Transmit_DMA(&huart2, uart2_tx_buffer, rx_length) != HAL_OK)
+      /* Frames are COBS blocks delimited by 0x00; split and decode each one. */
+      for (i = 0U; i < rx_length; i++)
       {
-        uart2_tx_busy = 0U;
-        Error_Handler();
+        if (frame_copy[i] == 0U)
+        {
+          if (i > frame_start)
+          {
+            Process_Command_Frame(&frame_copy[frame_start], i - frame_start);
+          }
+          frame_start = i + 1U;
+        }
       }
+    }
+
+    if ((HAL_GetTick() - command_last_tick) >= COMMAND_WATCHDOG_MS)
+    {
+      Apply_Motor_Command(0, 0);
+    }
+
+    if (uart2_tx_busy == 0U &&
+        (HAL_GetTick() - telemetry_last_tick) >= TELEMETRY_PERIOD_MS)
+    {
+      telemetry_last_tick = HAL_GetTick();
+      Send_Telemetry();
     }
   }
   /* USER CODE END 3 */
@@ -561,11 +694,13 @@ static void MX_GPIO_Init(void)
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
-  if (huart->Instance == USART2 &&
-      HAL_UARTEx_GetRxEventType(huart) == HAL_UART_RXEVENT_IDLE)
+  if (huart->Instance == USART2)
   {
     uart2_rx_length = Size;
     uart2_rx_ready = 1U;
+    /* Restart reception from the start of the buffer so the next frame does
+     * not have to wait for this one to be fully drained. */
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart2, uart2_rx_buffer, UART2_RX_BUFFER_SIZE);
   }
 }
 
