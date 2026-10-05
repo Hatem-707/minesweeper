@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(control_panel CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+configure_file(styles.toml "${CMAKE_CURRENT_BINARY_DIR}/styles.toml" COPYONLY)
 
 # Uncomment to download raylib
 # include(FetchContent)
@@ -40,8 +41,7 @@ add_executable(${PROJECT_NAME})
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 target_sources(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_INCLUDE})
-target_link_libraries(${PROJECT_NAME} 
-                      PRIVATE 
+set(CONTROL_PANEL_LIBRARIES
                       raylib 
                       fmt
                       PkgConfig::gtk3
@@ -50,3 +50,27 @@ target_link_libraries(${PROJECT_NAME}
                       PkgConfig::gstreamer-video
                       libzmq
 )
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CONTROL_PANEL_LIBRARIES})
+
+include(CTest)
+if(BUILD_TESTING)
+  find_package(GTest CONFIG REQUIRED)
+  add_executable(input_animation_tests
+    tests/input_animation_tests.cpp
+    tests/ui_store_tests.cpp
+    src/state.cpp
+    src/ui.cpp
+    src/ui_store.cpp
+    src/camera.cpp
+  )
+  target_include_directories(input_animation_tests PRIVATE src ${PROJECT_INCLUDE})
+  target_compile_options(input_animation_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_definitions(input_animation_tests PRIVATE
+    TEST_UI_CONFIG_FILE="${CMAKE_CURRENT_SOURCE_DIR}/styles.toml"
+  )
+  target_link_libraries(input_animation_tests PRIVATE
+    GTest::gtest_main ${CONTROL_PANEL_LIBRARIES}
+  )
+  include(GoogleTest)
+  gtest_discover_tests(input_animation_tests)
+endif()

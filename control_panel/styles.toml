@@ -1,27 +1,63 @@
+# Loaded once at startup. Edit this file and restart to apply changes.
+# Panel coordinates/sizes are fractions of the padded screen rectangle.
+
 [Screen]
 width = 1280
 height = 800
+fps = 60
+
+[Camera]
+resolution = 720
+
+[Style]
+app_padding = 4
+section_padding = 20
+cell_padding = 3
+text_padding = 8
+title_font = 24
+element_font = 20
+roundness = 0.025
 
 ["Camera view"]
 x = 0.0
 y = 0.0
-width = 0.2
-height = 0.2
-color = [255, 0, 0]
+width = 0.3
+height = 0.45
+color = [211, 54, 130]
 
 [Map]
-x = 0.2
+x = 0.3
 y = 0.0
-width = 0.8
-height = 0.8
-color = [0, 255, 0]
-[Map."Chekerboard Cell"]
-width = 0.04
-height = 0.04
+width = 0.7
+height = 0.9
+color = [42, 161, 152]
+# The 20x20 grid fits the map interior; cell sizes are derived automatically.
 
 [Controls]
 x = 0.0
-y = 0.6
-width = 0.2
-height = 0.2
-color = [0, 0, 255]
+y = 0.45
+width = 0.3
+height = 0.45
+color = [38, 139, 210]
+table_fraction = 0.75
+
+[Warnings]
+x = 0.0
+y = 0.9
+width = 1.0
+height = 0.1
+color = [203, 75, 22]
+
+[Colors]
+background = [253, 246, 226]
+text = [0, 0, 0]
+unchecked = [88, 110, 117]
+clean = [133, 153, 0]
+surface_mine = [203, 75, 22]
+buried_mine = [220, 50, 47]
+thrust = [220, 50, 47]
+
+[Hover]
+scale = 1.2
+frequency = 22.0 # Angular frequency in radians/second; larger means faster.
+damping_ratio = 0.65 # Must be between 0 and 1 (exclusive).

@@ -11,65 +11,25 @@
 #include "camera.hpp"
 #include "spin_lock.hpp"
 #include "state.hpp"
-
-namespace UI {
-constexpr int CELLS_NUM = 20;
-constexpr int SCREEN_HEIGHT = 800;
-constexpr int SCREEN_WIDTH = 1280;
-constexpr int APP_PAD = 4;
-constexpr int MAP_HEIGHT = static_cast<int>(0.9 * SCREEN_HEIGHT - 2 * APP_PAD);
-constexpr int MAP_WIDTH = static_cast<int>(0.7 * SCREEN_WIDTH - 2 * APP_PAD);
-constexpr int MAP_X = static_cast<int>(0.3 * SCREEN_WIDTH + APP_PAD);
-constexpr int MAP_Y = APP_PAD;
-constexpr int SECTION_PAD = 20;
-constexpr int CELL_PAD = 2;
-constexpr float DEFAULT_ROUNDNESS = 0.025;
-constexpr int TEXT_PAD = 8;
-constexpr int TITLE_FONT = 24;
-constexpr int ELE_FONT = 20;
-constexpr int FEED_X = APP_PAD;
-constexpr int FEED_Y = APP_PAD;
-constexpr int FEED_WIDTH = static_cast<int>(0.3 * SCREEN_WIDTH - 2 * APP_PAD);
-constexpr int FEED_HEIGHT = static_cast<int>(0.5 * MAP_HEIGHT);
-constexpr int CONTROLS_X = APP_PAD;
-constexpr int CONTROLS_Y = FEED_HEIGHT + FEED_Y;
-constexpr int CONTROLS_HEIGHT = FEED_HEIGHT;
-constexpr int CONTROLS_WIDTH = FEED_WIDTH;
-constexpr int CAMERA_RES = 720;
-constexpr int WARNINGS_HEIGHT =
-  static_cast<int>(0.1 * (SCREEN_HEIGHT - 2 * APP_PAD));
-constexpr int WARNINGS_WIDTH = SCREEN_WIDTH - 2 * APP_PAD;
-constexpr int WARNINGS_X = APP_PAD;
-constexpr int WARNINGS_Y = APP_PAD + MAP_HEIGHT;
-}
-
-namespace COLORS {
-constexpr Color grey = { 88, 110, 117, 255 };
-constexpr Color red = { 220, 50, 47, 255 };
-constexpr Color green = { 133, 153, 0, 255 };
-constexpr Color blue = { 38, 139, 210, 255 };
-constexpr Color orange = { 203, 75, 22, 255 };
-constexpr Color teal = { 42, 161, 152, 255 };
-constexpr Color pink = { 211, 54, 130, 255 };
-constexpr Color background = { 253, 246, 226, 255 };
-}
+#include "ui_store.hpp"
 
 class Drawable
 {
+private:
+  Rectangle rectangle;
+
 protected:
-  int x;
-  int y;
-  int width;
-  int height;
+  const UiStore& ui;
+  virtual void draw_children(float dt);
 
 public:
   std::vector<std::unique_ptr<Drawable>> children;
   virtual ~Drawable() = default;
-  Drawable(int x, int y, int width, int height);
-  Drawable(Rectangle rec);
-  void draw();
+  Drawable(const UiStore& ui, Rectangle rec);
+  void draw(float dt);
+  virtual void self_update(float) {}
   virtual void self_draw() = 0;
-  Rectangle get_rec(int pad = 0);
+  Rectangle get_rec(float pad = 0) const;
 };
 
 class Section : public Drawable
@@ -80,12 +40,12 @@ class Section : public Drawable
   Rectangle get_title_rec();
 
 public:
-  Section(int x, int y, int width, int height, std::string name, Color color);
+  Section(const UiStore& ui, Rectangle rec, std::string name, Color color);
   virtual ~Section() = default;
   void self_draw() final;
 };
 
-enum class CellState
+enum class MineState
 {
   unchecked,
   clean,
@@ -93,37 +53,49 @@ enum class CellState
   buried_mine,
 };
 
+class CellState
+{
+  MineState mine_state = MineState::unchecked;
+  float scale = 1.0f;
+  float target_scale = 1.0f;
+  float velocity = 0.0f;
+
+public:
+  Color get_color(const UiStore& ui) const;
+  float get_scale() const { return scale; }
+  void update_state(float dt, const UiStore& ui);
+  void set_mine_state(MineState);
+  void set_target_scale(float);
+};
+
 class MapCell final : public Drawable
 {
   CellState state;
-  Color get_color()
-  {
-    switch (state) {
-      case CellState::unchecked:
-        return COLORS::grey;
-      case CellState::clean:
-        return COLORS::green;
-      case CellState::surface_mine:
-        return COLORS::orange;
-      case CellState::buried_mine:
-        return COLORS::red;
-      default:
-        return COLORS::background;
-    }
-  };
+  bool hovered = false;
+  InputConnection hover_connection;
 
 public:
-  MapCell(int x, int y, int width, int height);
+  MapCell(const UiStore& ui, Rectangle rec, StateHandler&);
+  MapCell(const MapCell&) = delete;
+  MapCell& operator=(const MapCell&) = delete;
+  MapCell(MapCell&&) = delete;
+  MapCell& operator=(MapCell&&) = delete;
+  void self_update(float dt) override;
   void self_draw() override;
+  bool is_hovered() const { return hovered; }
+  Rectangle get_draw_rec() const;
   void set_state(CellState target_state);
 };
 
 class Map final : public Section
 {
-  std::array<MapCell*, UI::CELLS_NUM * UI::CELLS_NUM> cells;
+  std::array<MapCell*, UiStore::grid_size * UiStore::grid_size> cells;
+
+protected:
+  void draw_children(float dt) override;
 
 public:
-  Map();
+  Map(const UiStore& ui, StateHandler& state_handler);
   MapCell& cell_at(int x, int y);
 };
 
@@ -133,35 +105,35 @@ class CameraFeed final : public Drawable
   void self_draw() override;
 
 public:
-  CameraFeed(GstCamera& camera, Rectangle feed_rec);
+  CameraFeed(const UiStore& ui, GstCamera& camera, Rectangle feed_rec);
 };
 
 class Feed final : public Section
 {
 
 public:
-  Feed(GstCamera& camera);
+  Feed(const UiStore& ui, GstCamera& camera);
 };
 
 class SliderThrust final : public Drawable
 {
-  SpinLock<AppState>& state;
+  SpinLock<Telemetry>& state;
   void self_draw() override;
 
 public:
-  SliderThrust(Rectangle rec, SpinLock<AppState>& state);
+  SliderThrust(const UiStore& ui, Rectangle rec, SpinLock<Telemetry>& state);
 };
 
 class ThrustControls final : public Section
 {
 
 public:
-  ThrustControls(Rectangle rec, SpinLock<AppState>& state);
+  ThrustControls(const UiStore& ui, Rectangle rec, SpinLock<Telemetry>& state);
 };
 
 class TableControls final : public Drawable
 {
-  SpinLock<AppState>& state;
+  SpinLock<Telemetry>& state;
   void self_draw() override;
   std::array<std::string_view, 3> first_column = { "Health:",
                                                    "Pos_x :",
@@ -172,18 +144,20 @@ class TableControls final : public Drawable
   std::pair<int, int> get_entry_pos(int x, int y);
 
 public:
-  TableControls(Rectangle rec, SpinLock<AppState>& state);
+  TableControls(const UiStore& ui,
+                Rectangle rec,
+                SpinLock<Telemetry>& telemetry);
 };
 
 class Controls final : public Section
 {
 
 public:
-  Controls(SpinLock<AppState>& state);
+  Controls(const UiStore& ui, SpinLock<Telemetry>& telemetry);
 };
 
 class Warnings final : public Section
 {
 public:
-  Warnings();
+  Warnings(const UiStore& ui);
 };

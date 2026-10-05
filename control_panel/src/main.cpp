@@ -1,9 +1,11 @@
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <fmt/base.h>
 #include <memory>
 #include <random>
 #include <raylib.h>
+#include <stdexcept>
 #include <stop_token>
 #include <thread>
 
@@ -12,38 +14,63 @@
 #include "state.hpp"
 #include "ui.hpp"
 
-class Components final : protected Drawable
+class UIComponents final : protected Drawable
 {
   friend class App;
   void self_draw() override {};
-  Components(GstCamera& camera_texture, SpinLock<AppState>& state);
+  UIComponents(const UiStore&, GstCamera&, SpinLock<Telemetry>&, StateHandler&);
 };
 
-Components::Components(GstCamera& camera, SpinLock<AppState>& state)
-  : Drawable(0, 0, UI::SCREEN_WIDTH, UI::SCREEN_HEIGHT)
+UIComponents::UIComponents(const UiStore& ui,
+                           GstCamera& camera,
+                           SpinLock<Telemetry>& telemetry,
+                           StateHandler& state_handler)
+  : Drawable(ui, ui.screen_rect())
 {
-  children.push_back(std::make_unique<Map>());
-  children.push_back(std::make_unique<Feed>(camera));
-  children.push_back(std::make_unique<Controls>(state));
-  children.push_back(std::make_unique<Warnings>());
+  children.push_back(std::make_unique<Map>(ui, state_handler));
+  children.push_back(std::make_unique<Feed>(ui, camera));
+  children.push_back(std::make_unique<Controls>(ui, telemetry));
+  children.push_back(std::make_unique<Warnings>(ui));
 }
+
+// Declared before camera/scene members so the window outlives their resources.
+class AppWindow
+{
+public:
+  explicit AppWindow(const UiStore& ui)
+  {
+    InitWindow(ui.screen_width, ui.screen_height, "Control Panel");
+    if (!IsWindowReady()) {
+      throw std::runtime_error("Unable to initialize the control panel window");
+    }
+    SetTargetFPS(ui.target_fps);
+  }
+  ~AppWindow() { CloseWindow(); }
+  AppWindow(const AppWindow&) = delete;
+  AppWindow& operator=(const AppWindow&) = delete;
+};
 
 class App
 {
+  const UiStore ui;
+  AppWindow window;
   GstCamera camera;
-  SpinLock<AppState> state;
-  Components comp;
+  SpinLock<Telemetry> telemetry;
+  StateHandler state_handler;
+  UIComponents comp;
   std::jthread test_thread;
 
 public:
-  App();
+  explicit App(const std::filesystem::path& config_file);
   void run();
 };
 
-App::App()
-  : camera(UI::CAMERA_RES, UI::CAMERA_RES)
-  , state(AppState())
-  , comp(camera, state)
+App::App(const std::filesystem::path& config_file)
+  : ui(config_file)
+  , window(ui)
+  , camera(ui.camera_resolution, ui.camera_resolution)
+  , telemetry(Telemetry())
+  , comp(ui, camera, telemetry, state_handler)
   , test_thread([this](std::stop_token stop) {
     auto angle = std::uniform_real_distribution<>(-180.f, 180);
     auto pos = std::uniform_real_distribution<>(0, 20);
@@ -52,7 +79,7 @@ App::App()
     auto gen = std::random_device();
     while (!stop.stop_requested()) {
       {
-        auto guard = state.unlock();
+        auto guard = telemetry.unlock();
         guard.data.heading = angle(gen);
         guard.data.pos_x = pos(gen);
         guard.data.pos_y = pos(gen);
@@ -66,25 +93,34 @@ App::App()
 {
 }
 
-
 void
 App::run()
 {
   while (!WindowShouldClose()) {
+    state_handler.handle_input();
     BeginDrawing();
-    ClearBackground(COLORS::background);
-    comp.draw();
+    ClearBackground(ui.background);
+    comp.draw(GetFrameTime());
     EndDrawing();
   }
 }
 
 int
-main()
+main(int argc, char** argv)
 {
-  InitWindow(UI::SCREEN_WIDTH, UI::SCREEN_HEIGHT, "Control Panel");
-  App app;
-  // SetWindowState(FLAG_WINDOW_RESIZABLE);
-  SetTargetFPS(60);
-  app.run();
-  CloseWindow();
+  if (argc > 2) {
+    fmt::println(stderr, "Usage: {} [styles.toml]", argv[0]);
+    return 1;
+  }
+  try {
+    const auto config_file =
+      argc == 2
+        ? std::filesystem::path(argv[1])
+        : std::filesystem::path(GetApplicationDirectory()) / "styles.toml";
+    App app(config_file);
+    app.run();
+  } catch (const std::exception& error) {
+    fmt::println(stderr, "Control panel startup failed: {}", error.what());
+    return 1;
+  }
 }
