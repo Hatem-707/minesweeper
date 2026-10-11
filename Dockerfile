@@ -29,3 +29,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-lyrical-ros-base=0.13.0-3* \
     && rm -rf /var/lib/apt/lists/*
 
+
+# ZeroMQ for the control panel bridge (ros_vol/src/minesweeper_bridge).
+# Run with: -v /tmp/minesweeper:/tmp/minesweeper so the GUI can reach its
+# ipc sockets, and mount protocol/ next to ros_vol (or pass
+# -DMINESWEEPER_PROTOCOL_INCLUDE) so the bridge finds messages.hpp.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libzmq3-dev \
+    cppzmq-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*

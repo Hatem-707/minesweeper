@@ -9,24 +9,36 @@
 #include <vector>
 
 #include "camera.hpp"
+#include "drive.hpp"
+#include "pickup.hpp"
 #include "spin_lock.hpp"
 #include "state.hpp"
+#include "ui_fonts.hpp"
 #include "ui_store.hpp"
+#include "wire.hpp"
 
 class Drawable
 {
 private:
   Rectangle rectangle;
+  const UiFonts* fonts = nullptr;
 
 protected:
   const UiStore& ui;
   virtual void draw_children(float dt);
+  void draw_text(const char* text,
+                 float x,
+                 float y,
+                 int size,
+                 Color color) const;
+  float measure_text(const char* text, int size) const;
 
 public:
   std::vector<std::unique_ptr<Drawable>> children;
   virtual ~Drawable() = default;
   Drawable(const UiStore& ui, Rectangle rec);
   void draw(float dt);
+  void set_fonts(const UiFonts& fonts);
   virtual void self_update(float) {}
   virtual void self_draw() = 0;
   Rectangle get_rec(float pad = 0) const;
@@ -115,45 +127,96 @@ public:
   Feed(const UiStore& ui, GstCamera& camera);
 };
 
-class SliderThrust final : public Drawable
+enum class DriveChannel
 {
-  SpinLock<Telemetry>& state;
+  linear,
+  angular
+};
+
+class CommandMeter final : public Drawable
+{
+  const DriveController& drive;
+  DriveChannel channel;
   void self_draw() override;
 
 public:
-  SliderThrust(const UiStore& ui, Rectangle rec, SpinLock<Telemetry>& state);
+  CommandMeter(const UiStore& ui,
+               Rectangle rec,
+               const DriveController& drive,
+               DriveChannel channel);
 };
 
-class ThrustControls final : public Section
+struct DriveLayout
 {
+  std::array<Rectangle, 4> arrows; // Up, down, left, right.
+  std::array<Rectangle, 2> meters; // Linear, angular.
+  Rectangle lock;
+};
+
+class DriveControls final : public Drawable
+{
+  const DriveController& drive;
+  const DriveInput& input;
+  const DriveLayout positions;
+  Texture2D turn_arrow{};
+  DriveLayout calculate_layout() const;
+  void self_draw() override;
 
 public:
-  ThrustControls(const UiStore& ui, Rectangle rec, SpinLock<Telemetry>& state);
+  DriveControls(const UiStore& ui,
+                Rectangle rec,
+                const DriveController& drive,
+                const DriveInput& input);
+  ~DriveControls() override;
+  DriveControls(const DriveControls&) = delete;
+  DriveControls& operator=(const DriveControls&) = delete;
+  const DriveLayout& layout() const { return positions; }
 };
 
 class TableControls final : public Drawable
 {
-  SpinLock<Telemetry>& state;
+  Wire& wire;
   void self_draw() override;
-  std::array<std::string_view, 3> first_column = { "Health:",
-                                                   "Pos_x :",
-                                                   "Speed :" };
-  std::array<std::string_view, 3> second_column = { "Magnet:",
-                                                    "Pos_y :",
-                                                    "Orien :" };
-  std::pair<int, int> get_entry_pos(int x, int y);
 
 public:
-  TableControls(const UiStore& ui,
+  TableControls(const UiStore& ui, Rectangle rec, Wire& wire);
+};
+
+class PickupControl final : public Drawable
+{
+  PickupController& controller;
+  Wire& wire;
+  const StateHandler& handler;
+  std::array<InputConnection, 2> connections;
+  bool requested = false;
+  void self_update(float dt) override;
+  void self_draw() override;
+
+public:
+  PickupControl(const UiStore& ui,
                 Rectangle rec,
-                SpinLock<Telemetry>& telemetry);
+                StateHandler& handler,
+                Wire& wire,
+                PickupController& controller);
 };
 
 class Controls final : public Section
 {
+  DriveController& drive;
+  Wire& wire;
+  const StateHandler& handler;
+  std::array<bool, 8> held_keys{};
+  std::array<InputConnection, 9> key_connections;
+  DriveInput input;
+  bool lock_requested = false;
+  void self_update(float dt) override;
 
 public:
-  Controls(const UiStore& ui, SpinLock<Telemetry>& telemetry);
+  Controls(const UiStore& ui,
+           Wire& wire,
+           StateHandler& handler,
+           DriveController& drive,
+           PickupController& pickup);
 };
 
 class Warnings final : public Section

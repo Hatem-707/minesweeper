@@ -1,5 +1,6 @@
 #include "ui_store.hpp"
 #include "toml.hpp"
+#include <minesweeper/messages.hpp>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -134,10 +135,20 @@ UiStore::UiStore(const std::filesystem::path& file)
   cell_padding = integer(style, "cell_padding", cell_padding);
   text_padding = integer(style, "text_padding", text_padding);
   title_font = integer(style, "title_font", title_font, 1);
-  element_font = integer(style, "element_font", element_font, 1);
   roundness = number(style, "roundness", roundness, 0.0f, 1.0f);
   table_fraction = number(
     table(root, "Controls"), "table_fraction", table_fraction, 0.01f, 0.99f);
+  const auto& controls_config = table(root, "Controls");
+  control_font = integer(controls_config, "font", control_font, 1);
+  arrow_size = integer(controls_config, "arrow_size", arrow_size, 24);
+  control_gap = integer(controls_config, "gap", control_gap);
+  pickup_button_height =
+    integer(controls_config, "button_height", pickup_button_height, 24);
+  const auto& drive = table(root, "Drive");
+  drive_ramp_rate =
+    number(drive, "ramp_rate", drive_ramp_rate, 0.001f, 100000.0f);
+  maximum_thrust =
+    number(drive, "maximum_thrust", maximum_thrust, 1.0f, msg::drive_limit);
 
   const auto& hover = table(root, "Hover");
   hover_scale = number(hover, "scale", hover_scale, 1.0f, 3.0f);
@@ -159,6 +170,8 @@ UiStore::UiStore(const std::filesystem::path& file)
   surface_mine = color(colors, "surface_mine", surface_mine);
   buried_mine = color(colors, "buried_mine", buried_mine);
   thrust = color(colors, "thrust", thrust);
+  thrust_locked = color(colors, "thrust_locked", thrust_locked);
+  control_surface = color(colors, "control_surface", control_surface);
   validate_layout();
 }
 
@@ -178,6 +191,18 @@ UiStore::content_rect() const
            padding,
            screen_width - 2.0f * padding,
            screen_height - 2.0f * padding };
+}
+
+float
+UiStore::drive_meter_width() const
+{
+  return std::max(96.f, 4.5f * control_font);
+}
+
+float
+UiStore::pickup_height() const
+{
+  return static_cast<float>(pickup_button_height);
 }
 
 void
@@ -202,10 +227,16 @@ UiStore::validate_layout() const
     invalid("Style.cell_padding", "map cells have no drawable area");
   }
   const auto controls_rect = controls.bounds.resolve(parent);
-  if ((controls_rect.height - 2.0f * section_padding) *
-          (1.0f - table_fraction) <=
-        2.0f * section_padding ||
-      controls_rect.width <= 4.0f * section_padding) {
-    invalid("Controls.table_fraction", "thrust controls have no drawable area");
+  const float inner_height = controls_rect.height - 2.0f * section_padding;
+  if (inner_height * table_fraction < 3.0f * (control_font + 2) ||
+      inner_height * (1.0f - table_fraction) - pickup_height() - lock_height -
+          3.0f * control_gap <
+        std::max(80.0f, 2.0f * control_font + 32) ||
+      controls_rect.width - 2.0f * section_padding <
+        2 * drive_meter_width() + pad_meter_gap + meter_gap + 2 * arrow_gap +
+          3 * minimum_arrow_size ||
+      pickup_button_height < title_font + control_font + 16) {
+    invalid("Controls",
+            "not enough room for sensor readings, drive and pickup controls");
   }
 }

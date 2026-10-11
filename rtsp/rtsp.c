@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
   gst_rtsp_mount_points_add_factory(mounts, path, factory);
   g_object_unref(mounts);
 
-  printf("serving on rtsp://127.0.0.1:%s%s \n", port, path);
+  printf("serving on rtsp://0.0.0.0:%s%s \n", port, path);
 
   /* start serving */
   g_main_loop_run(loop);

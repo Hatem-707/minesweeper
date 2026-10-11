@@ -6,17 +6,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-struct Telemetry
-{
-  float speed;
-  float health;
-  float heading;
-  float pos_x;
-  float pos_y;
-  bool magnet;
-  int16_t thrust;
-};
-
 // Keep the connection alive for as long as its callback should be registered.
 class InputConnection
 {
@@ -42,19 +31,24 @@ class StateHandler
 public:
   using MousePosition = std::pair<float, float>;
   using KeyCallback = std::function<void()>;
+  using KeyDownCallback = std::function<void(bool)>;
   using MouseCallback = std::function<void(MousePosition)>;
+  using MouseDownCallback = std::function<void(MousePosition, bool)>;
 
 private:
   template<typename Callback>
   using Callbacks = std::vector<std::weak_ptr<Callback>>;
 
   std::unordered_map<int, Callbacks<KeyCallback>> key_pressed_events;
+  std::unordered_map<int, Callbacks<KeyDownCallback>> key_down_events;
   Callbacks<MouseCallback> mouse_motion_events;
   std::unordered_map<int, Callbacks<MouseCallback>> mouse_click_events;
+  std::unordered_map<int, Callbacks<MouseDownCallback>> mouse_down_events;
   MousePosition previous_mouse_position{};
   bool mouse_initialized = false;
   bool previous_cursor_available = false;
   bool mouse_registration_changed = false;
+  bool window_focused = true;
 
   template<typename Callback>
   InputConnection connect(Callbacks<Callback>& events, Callback callback)
@@ -72,16 +66,24 @@ public:
   ~StateHandler() = default;
 
   void handle_input();
+  bool is_focused() const { return window_focused; }
 
   StateHandler(const StateHandler&) = delete;
   StateHandler& operator=(const StateHandler&) = delete;
 
   [[nodiscard]] InputConnection register_key_press(int key,
                                                    KeyCallback callback);
+  // Called every frame, including false on release or loss of window focus.
+  [[nodiscard]] InputConnection register_key_down(int key,
+                                                  KeyDownCallback callback);
   // The initial position is dispatched once; (-inf, -inf) clears hover when
   // the cursor leaves the window or the window loses focus.
   [[nodiscard]] InputConnection register_mouse_movement(MouseCallback callback);
   [[nodiscard]] InputConnection register_mouse_click(
     MouseCallback callback,
+    int button = MOUSE_BUTTON_LEFT);
+  // Dispatched after clicks, every frame, including false on focus/cursor loss.
+  [[nodiscard]] InputConnection register_mouse_down(
+    MouseDownCallback callback,
     int button = MOUSE_BUTTON_LEFT);
 };

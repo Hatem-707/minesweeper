@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>minesweeper_bridge</name>
+  <version>0.1.0</version>
+  <description>Translates the control panel's ZeroMQ IPC contract to and from ROS 2 topics.</description>
+  <maintainer email="hatemfeckry347@gmail.com">Hatem feckry</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>libzmq3-dev</depend>
+  <build_depend>cppzmq</build_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,39 +1,46 @@
-#include <chrono>
-#include <cstdint>
 #include <filesystem>
 #include <fmt/base.h>
 #include <memory>
-#include <random>
 #include <raylib.h>
 #include <stdexcept>
-#include <stop_token>
-#include <thread>
 
 #include "camera.hpp"
-#include "spin_lock.hpp"
 #include "state.hpp"
 #include "ui.hpp"
+#include "wire.hpp"
 
 class UIComponents final : protected Drawable
 {
   friend class App;
   void self_draw() override {};
-  UIComponents(const UiStore&, GstCamera&, SpinLock<Telemetry>&, StateHandler&);
+  UIComponents(const UiStore&,
+               const UiFonts&,
+               GstCamera&,
+               Wire&,
+               StateHandler&,
+               DriveController&,
+               PickupController&);
 };
 
 UIComponents::UIComponents(const UiStore& ui,
+                           const UiFonts& fonts,
                            GstCamera& camera,
-                           SpinLock<Telemetry>& telemetry,
-                           StateHandler& state_handler)
+                           Wire& wire,
+                           StateHandler& state_handler,
+                           DriveController& drive,
+                           PickupController& pickup)
   : Drawable(ui, ui.screen_rect())
 {
   children.push_back(std::make_unique<Map>(ui, state_handler));
   children.push_back(std::make_unique<Feed>(ui, camera));
-  children.push_back(std::make_unique<Controls>(ui, telemetry));
+  children.push_back(
+    std::make_unique<Controls>(ui, wire, state_handler, drive, pickup));
   children.push_back(std::make_unique<Warnings>(ui));
+  set_fonts(fonts);
 }
 
-// Declared before camera/scene members so the window outlives their resources.
+// Declared before font/camera/scene members so the window outlives their
+// resources.
 class AppWindow
 {
 public:
@@ -54,11 +61,13 @@ class App
 {
   const UiStore ui;
   AppWindow window;
+  UiFonts fonts;
   GstCamera camera;
-  SpinLock<Telemetry> telemetry;
+  Wire wire;
   StateHandler state_handler;
+  DriveController drive;
+  PickupController pickup;
   UIComponents comp;
-  std::jthread test_thread;
 
 public:
   explicit App(const std::filesystem::path& config_file);
@@ -68,28 +77,12 @@ public:
 App::App(const std::filesystem::path& config_file)
   : ui(config_file)
   , window(ui)
+  , fonts(std::filesystem::path(GetApplicationDirectory()) /
+            "assets/fonts/Roboto-Regular.ttf",
+          { ui.control_font, ui.title_font })
   , camera(ui.camera_resolution, ui.camera_resolution)
-  , telemetry(Telemetry())
-  , comp(ui, camera, telemetry, state_handler)
-  , test_thread([this](std::stop_token stop) {
-    auto angle = std::uniform_real_distribution<>(-180.f, 180);
-    auto pos = std::uniform_real_distribution<>(0, 20);
-    auto health = std::uniform_real_distribution<>(0, 1);
-    auto thrust = std::uniform_int_distribution<int16_t>(-255, 255);
-    auto gen = std::random_device();
-    while (!stop.stop_requested()) {
-      {
-        auto guard = telemetry.unlock();
-        guard.data.heading = angle(gen);
-        guard.data.pos_x = pos(gen);
-        guard.data.pos_y = pos(gen);
-        guard.data.speed = pos(gen);
-        guard.data.health = health(gen);
-        guard.data.thrust = thrust(gen);
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-  })
+  , drive(ui.drive_ramp_rate, ui.maximum_thrust)
+  , comp(ui, fonts, camera, wire, state_handler, drive, pickup)
 {
 }
 
