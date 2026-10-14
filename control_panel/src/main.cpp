@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "camera.hpp"
+#include "mine_map.hpp"
 #include "state.hpp"
 #include "ui.hpp"
 #include "wire.hpp"
@@ -18,8 +19,8 @@ class UIComponents final : protected Drawable
                GstCamera&,
                Wire&,
                StateHandler&,
-               DriveController&,
-               PickupController&);
+               const MineMap&,
+               MessageLog&);
 };
 
 UIComponents::UIComponents(const UiStore& ui,
@@ -27,15 +28,15 @@ UIComponents::UIComponents(const UiStore& ui,
                            GstCamera& camera,
                            Wire& wire,
                            StateHandler& state_handler,
-                           DriveController& drive,
-                           PickupController& pickup)
+                           const MineMap& mines,
+                           MessageLog& log)
   : Drawable(ui, ui.screen_rect())
 {
-  children.push_back(std::make_unique<Map>(ui, state_handler));
-  children.push_back(std::make_unique<Feed>(ui, camera));
   children.push_back(
-    std::make_unique<Controls>(ui, wire, state_handler, drive, pickup));
-  children.push_back(std::make_unique<Warnings>(ui));
+    std::make_unique<Map>(ui, state_handler, mines, wire, log));
+  children.push_back(std::make_unique<Feed>(ui, camera));
+  children.push_back(std::make_unique<Status>(ui, wire, mines));
+  children.push_back(std::make_unique<Messages>(ui, log));
   set_fonts(fonts);
 }
 
@@ -51,6 +52,7 @@ public:
       throw std::runtime_error("Unable to initialize the control panel window");
     }
     SetTargetFPS(ui.target_fps);
+    SetExitKey(KEY_NULL); // Escape cancels a pose reset instead.
   }
   ~AppWindow() { CloseWindow(); }
   AppWindow(const AppWindow&) = delete;
@@ -65,9 +67,11 @@ class App
   GstCamera camera;
   Wire wire;
   StateHandler state_handler;
-  DriveController drive;
-  PickupController pickup;
+  MineMap mines;
+  MessageLog log;
   UIComponents comp;
+
+  void update_map();
 
 public:
   explicit App(const std::filesystem::path& config_file);
@@ -79,11 +83,23 @@ App::App(const std::filesystem::path& config_file)
   , window(ui)
   , fonts(std::filesystem::path(GetApplicationDirectory()) /
             "assets/fonts/Roboto-Regular.ttf",
-          { ui.control_font, ui.title_font })
+          { ui.status_font, ui.title_font })
   , camera(ui.camera_resolution, ui.camera_resolution)
-  , drive(ui.drive_ramp_rate, ui.maximum_thrust)
-  , comp(ui, fonts, camera, wire, state_handler, drive, pickup)
+  , mines(ui.mapping)
+  , comp(ui, fonts, camera, wire, state_handler, mines, log)
 {
+}
+
+void
+App::update_map()
+{
+  for (const auto& sample : wire.take_telemetry()) {
+    mines.update(sample.telemetry, sample.received_ns);
+  }
+  mines.tick(msg::monotonic_ns());
+  for (const auto& message : mines.take_messages()) {
+    log.add(message);
+  }
 }
 
 void
@@ -91,6 +107,7 @@ App::run()
 {
   while (!WindowShouldClose()) {
     state_handler.handle_input();
+    update_map();
     BeginDrawing();
     ClearBackground(ui.background);
     comp.draw(GetFrameTime());

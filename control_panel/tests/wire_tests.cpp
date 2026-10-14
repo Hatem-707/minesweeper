@@ -89,70 +89,37 @@ TEST(LinkHealthTest, PerNodeAgesAndBridgeReceiptAge)
   link.telemetry = msg::Telemetry{};
   link.telemetry->localization_age_ms = 20;
   link.telemetry->hardware_age_ms = 900;
-  link.telemetry->arm_upright = 1;
   link.telemetry_received_ns = 1'000'000'000;
 
   auto health = link_health(link, 1'100'000'000);
   EXPECT_TRUE(health.bridge);
   EXPECT_TRUE(health.localization);
   EXPECT_FALSE(health.hardware);
-  EXPECT_FALSE(arm_upright(link, health)); // Stale hardware is not upright.
-
-  link.telemetry->hardware_age_ms = 20;
-  health = link_health(link, 1'100'000'000);
-  EXPECT_TRUE(arm_upright(link, health));
 
   health = link_health(link, 1'000'000'000 + stale_after_ns + 1);
   EXPECT_FALSE(health.bridge);
   EXPECT_FALSE(health.localization);
-  EXPECT_FALSE(arm_upright(link, health));
 }
 
-TEST(WireTest, SendsDriveAndOneShotCommands)
+TEST(WireTest, SendsResetPose)
 {
   Peers peers;
   Wire wire(peers.endpoints);
-  wire.set_drive(100, -300); // Clamped to the contract limit.
-  std::optional<msg::Drive> drive;
-  for (int attempt = 0; attempt < 20 && (!drive || drive->forward == 0);
-       ++attempt) {
-    drive = peers.receive<msg::Drive>();
-    wire.set_drive(100, -300);
+  // PUSH with ZMQ_IMMEDIATE drops sends until the pipe is up, so retry.
+  std::optional<msg::ResetPose> reset;
+  peers.commands.set(zmq::sockopt::rcvtimeo, 50);
+  for (int attempt = 0; attempt < 40 && !reset; ++attempt) {
+    wire.send_reset(1.5, 2, msg::Heading::NegX);
+    reset = peers.receive<msg::ResetPose>();
   }
-  ASSERT_TRUE(drive);
-  EXPECT_FLOAT_EQ(drive->forward, 100);
-  EXPECT_FLOAT_EQ(drive->left, -msg::drive_limit);
-  EXPECT_FALSE(msg::is_expired(drive->header));
-
-  wire.send_pickup();
-  EXPECT_TRUE(peers.receive<msg::Pickup>());
-
-  wire.send_reset(1.5, 2, msg::Heading::NegX);
-  const auto reset = peers.receive<msg::ResetPose>();
   ASSERT_TRUE(reset);
   EXPECT_DOUBLE_EQ(reset->x, 1.5);
+  EXPECT_DOUBLE_EQ(reset->y, 2);
   EXPECT_EQ(reset->heading, msg::Heading::NegX);
+  EXPECT_FALSE(msg::is_expired(reset->header));
 }
 
-TEST(WireTest, DriveFallsBackToZeroWhenTheUiStopsRefreshing)
-{
-  Peers peers;
-  Wire wire(peers.endpoints);
-  wire.set_drive(100, 0);
-  std::this_thread::sleep_for(
-    std::chrono::nanoseconds(Wire::drive_refresh_timeout_ns) + 100ms);
-  // Discard drives queued before the timeout.
-  peers.commands.set(zmq::sockopt::rcvtimeo, 0);
-  zmq::message_t frame;
-  while (peers.commands.recv(frame)) {
-  }
-  peers.commands.set(zmq::sockopt::rcvtimeo, 1000);
-  const auto drive = peers.receive<msg::Drive>();
-  ASSERT_TRUE(drive);
-  EXPECT_FLOAT_EQ(drive->forward, 0);
-}
-
-TEST(WireTest, ReceivesTelemetryVisionAndMetalEdges)
+TEST(WireTest, ReceivesTelemetryAndVision)
 {
   Peers peers;
   Wire wire(peers.endpoints);
@@ -162,10 +129,10 @@ TEST(WireTest, ReceivesTelemetryVisionAndMetalEdges)
   ASSERT_TRUE(peers.publish_until(
     peers.telemetry, telemetry, [&] { return wire.link().telemetry.has_value(); }));
   EXPECT_DOUBLE_EQ(wire.link().telemetry->x, 3);
-  // Repeated positive samples are one rising edge.
-  const auto hits = wire.take_metal_hits();
-  ASSERT_EQ(hits.size(), 1u);
-  EXPECT_DOUBLE_EQ(hits[0].telemetry.x, 3);
+  // Every sample is queued for the map, oldest first.
+  const auto samples = wire.take_telemetry();
+  ASSERT_FALSE(samples.empty());
+  EXPECT_DOUBLE_EQ(samples.front().telemetry.x, 3);
 
   msg::Vision vision{};
   vision.surface_detected = 1;
@@ -173,5 +140,4 @@ TEST(WireTest, ReceivesTelemetryVisionAndMetalEdges)
   ASSERT_TRUE(peers.publish_until(
     peers.vision, vision, [&] { return wire.link().vision.has_value(); }));
   EXPECT_TRUE(link_health(wire.link()).vision);
-  EXPECT_FALSE(wire.take_vision().empty());
 }

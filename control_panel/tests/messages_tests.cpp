@@ -20,32 +20,27 @@ stamped(T message)
 }
 }
 
-TEST(MessagesTest, DriveRoundTripsThroughZmqFrame)
+TEST(MessagesTest, ResetRoundTripsThroughZmqFrame)
 {
   std::uint32_t seq = 7;
-  msg::Drive drive{};
-  drive.forward = 120.5f;
-  drive.left = -255;
-  const auto frame = msg::encode(drive, seq);
+  msg::ResetPose reset{};
+  reset.x = 1.5;
+  reset.y = 19.5;
+  reset.heading = msg::Heading::NegX;
+  const auto frame = msg::encode(reset, seq);
   EXPECT_EQ(seq, 8u);
-  EXPECT_EQ(msg::peek_type(frame), msg::MessageType::Drive);
-  const auto decoded = msg::decode<msg::Drive>(frame);
+  EXPECT_EQ(msg::peek_type(frame), msg::MessageType::ResetPose);
+  const auto decoded = msg::decode<msg::ResetPose>(frame);
   ASSERT_TRUE(decoded);
   EXPECT_EQ(decoded->header.version, msg::protocol_version);
   EXPECT_EQ(decoded->header.seq, 7u);
-  EXPECT_FLOAT_EQ(decoded->forward, 120.5f);
-  EXPECT_FLOAT_EQ(decoded->left, -255);
+  EXPECT_DOUBLE_EQ(decoded->x, 1.5);
+  EXPECT_DOUBLE_EQ(decoded->y, 19.5);
+  EXPECT_EQ(decoded->heading, msg::Heading::NegX);
 }
 
-TEST(MessagesTest, EveryTypeRoundTrips)
+TEST(MessagesTest, TelemetryAndVisionRoundTrip)
 {
-  msg::ResetPose reset{};
-  reset.x = 20;
-  reset.y = 0.5;
-  reset.heading = msg::Heading::NegY;
-  EXPECT_TRUE(msg::decode<msg::ResetPose>(bytes(stamped(reset))));
-  EXPECT_TRUE(msg::decode<msg::Pickup>(bytes(stamped(msg::Pickup{}))));
-
   msg::Telemetry telemetry{};
   telemetry.localization_age_ms = msg::never;
   telemetry.arm_upright = 1;
@@ -53,6 +48,7 @@ TEST(MessagesTest, EveryTypeRoundTrips)
   const auto decoded = msg::decode<msg::Telemetry>(bytes(stamped(telemetry)));
   ASSERT_TRUE(decoded);
   EXPECT_EQ(decoded->localization_age_ms, msg::never);
+  EXPECT_EQ(decoded->arm_upright, 1);
   EXPECT_EQ(decoded->metal_detected, 1);
 
   msg::Vision vision{};
@@ -71,27 +67,21 @@ TEST(MessagesTest, TypeIsTheFirstByte)
 
 TEST(MessagesTest, RejectsWrongSizeTypeAndVersion)
 {
-  const auto drive = stamped(msg::Drive{});
-  EXPECT_FALSE(msg::decode<msg::Drive>(bytes(drive).first(sizeof(drive) - 1)));
-  EXPECT_FALSE(msg::decode<msg::Pickup>(bytes(drive).first(sizeof(msg::Pickup))));
+  const auto reset = stamped(msg::ResetPose{});
+  EXPECT_FALSE(
+    msg::decode<msg::ResetPose>(bytes(reset).first(sizeof(reset) - 1)));
 
-  auto wrong_version = drive;
+  auto wrong_version = reset;
   wrong_version.header.version = msg::protocol_version + 1;
-  EXPECT_FALSE(msg::decode<msg::Drive>(bytes(wrong_version)));
+  EXPECT_FALSE(msg::decode<msg::ResetPose>(bytes(wrong_version)));
 
-  auto wrong_type = drive;
+  auto wrong_type = reset;
   wrong_type.header.type = msg::MessageType::Telemetry;
-  EXPECT_FALSE(msg::decode<msg::Drive>(bytes(wrong_type)));
+  EXPECT_FALSE(msg::decode<msg::ResetPose>(bytes(wrong_type)));
 }
 
 TEST(MessagesTest, RejectsOutOfRangeValues)
 {
-  msg::Drive drive{};
-  drive.forward = msg::drive_limit + 1;
-  EXPECT_FALSE(msg::decode<msg::Drive>(bytes(stamped(drive))));
-  drive.forward = std::numeric_limits<float>::quiet_NaN();
-  EXPECT_FALSE(msg::decode<msg::Drive>(bytes(stamped(drive))));
-
   msg::ResetPose reset{};
   reset.heading = msg::Heading(4);
   EXPECT_FALSE(msg::decode<msg::ResetPose>(bytes(stamped(reset))));
@@ -102,6 +92,9 @@ TEST(MessagesTest, RejectsOutOfRangeValues)
   msg::Telemetry telemetry{};
   telemetry.arm_upright = 2;
   EXPECT_FALSE(msg::decode<msg::Telemetry>(bytes(stamped(telemetry))));
+  telemetry.arm_upright = 0;
+  telemetry.heading_rad = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(msg::decode<msg::Telemetry>(bytes(stamped(telemetry))));
 
   msg::Vision vision{};
   vision.confidence = 1.5f;
@@ -110,7 +103,7 @@ TEST(MessagesTest, RejectsOutOfRangeValues)
 
 TEST(MessagesTest, CommandsExpireAfter200Milliseconds)
 {
-  const auto drive = stamped(msg::Drive{});
-  EXPECT_FALSE(msg::is_expired(drive.header, 1000 + msg::command_expiry_ns));
-  EXPECT_TRUE(msg::is_expired(drive.header, 1001 + msg::command_expiry_ns));
+  const auto reset = stamped(msg::ResetPose{});
+  EXPECT_FALSE(msg::is_expired(reset.header, 1000 + msg::command_expiry_ns));
+  EXPECT_TRUE(msg::is_expired(reset.header, 1001 + msg::command_expiry_ns));
 }

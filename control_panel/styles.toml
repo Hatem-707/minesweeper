@@ -11,44 +11,48 @@ resolution = 720
 
 [Style]
 app_padding = 4
-section_padding = 20
+section_padding = 28
 cell_padding = 3
 text_padding = 8
-title_font = 24
+title_font = 28
 roundness = 0.025
 
 ["Camera view"]
 x = 0.0
 y = 0.0
-width = 0.325
-height = 0.38
+width = 0.4
+height = 0.6
 color = [211, 54, 130]
 
 [Map]
-x = 0.325
+x = 0.4
 y = 0.0
-width = 0.675
+width = 0.6
 height = 0.9
 color = [42, 161, 152]
 # The 20x20 grid fits the map interior; cell sizes are derived automatically.
+field_size = 20.0 # Metres along each side of the square field.
 
-[Controls]
+[Detector]
+# Metal detector position relative to the robot pose, in metres.
+dx = 0.0 # Forward.
+dy = 0.0 # Left.
+
+[Classification]
+# After a metal hit, lowering the arm (contact switch off) within this window
+# marks a SURFACE mine. Otherwise the mine is BURIED.
+seconds = 5.0
+distance = 0.5 # Metres the robot may move before the window closes.
+
+[Status]
 x = 0.0
-y = 0.38
-width = 0.325
-height = 0.52
+y = 0.6
+width = 0.4
+height = 0.3
 color = [38, 139, 210]
-table_fraction = 0.19
-font = 20
-arrow_size = 96
-button_height = 64
-gap = 10
+font = 24
 
-[Drive]
-ramp_rate = 85.0 # Motor-command units per second; reaches 255 in three seconds.
-maximum_thrust = 255.0 # Signed limit for both linear and angular commands.
-
-[Warnings]
+[Messages]
 x = 0.0
 y = 0.9
 width = 1.0
@@ -60,11 +64,11 @@ background = [253, 246, 226]
 text = [0, 0, 0]
 unchecked = [88, 110, 117]
 clean = [133, 153, 0]
+pending = [181, 137, 0]
 surface_mine = [203, 75, 22]
 buried_mine = [220, 50, 47]
-thrust = [220, 50, 47]
-thrust_locked = [133, 153, 0]
-control_surface = [238, 232, 213]
+robot = [38, 139, 210]
+selection = [108, 113, 196]
 
 [Hover]
 scale = 1.2

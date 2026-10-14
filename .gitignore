@@ -11,3 +11,9 @@ minesweeper_firmware/Debug/
 
 # VS Code browse database
 **/.vscode/browse.vc.db*
+
+# colcon workspace output and recorded bags
+ros_vol/build/
+ros_vol/install/
+ros_vol/log/
+ros_vol/bags/

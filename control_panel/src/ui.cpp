@@ -1,10 +1,7 @@
 #include "ui.hpp"
-#include "camera.hpp"
-#include "spin_lock.hpp"
-#include "state.hpp"
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
+#include <filesystem>
 #include <fmt/format.h>
 #include <memory>
 #include <raylib.h>
@@ -130,6 +127,8 @@ CellState::get_color(const UiStore& ui) const
       return ui.unchecked;
     case MineState::clean:
       return ui.clean;
+    case MineState::pending:
+      return ui.pending;
     case MineState::surface_mine:
       return ui.surface_mine;
     case MineState::buried_mine:
@@ -186,8 +185,14 @@ CellState::set_target_scale(float scale)
   }
 }
 
-MapCell::MapCell(const UiStore& ui, Rectangle rec, StateHandler& state_handler)
+MapCell::MapCell(const UiStore& ui,
+                 Rectangle rec,
+                 StateHandler& state_handler,
+                 const MineMap& mines,
+                 Cell cell)
   : Drawable(ui, rec)
+  , mines(mines)
+  , cell(cell)
 {
   hover_connection = state_handler.register_mouse_movement(
     [this](std::pair<float, float> mouse_pos) {
@@ -202,6 +207,7 @@ MapCell::MapCell(const UiStore& ui, Rectangle rec, StateHandler& state_handler)
 void
 MapCell::self_update(float dt)
 {
+  state.set_mine_state(mines.at(cell));
   state.update_state(dt, ui);
 }
 
@@ -220,37 +226,123 @@ MapCell::get_draw_rec() const
 void
 MapCell::self_draw()
 {
-  Color color = state.get_color(ui);
-  Rectangle rec = get_draw_rec();
-  DrawRectangleRounded(rec, ui.roundness, 0, color);
+  DrawRectangleRounded(get_draw_rec(), ui.roundness, 0, state.get_color(ui));
 }
 
 void
-MapCell::set_state(CellState target_state)
+MessageLog::add(const std::string& message)
 {
-  state = std::move(target_state);
-  state.set_target_scale(hovered ? this->ui.hover_scale : 1.0f);
+  const int seconds = static_cast<int>(GetTime());
+  entries.push_front(
+    fmt::format("[{:02}:{:02}] {}", seconds / 60, seconds % 60, message));
+  if (entries.size() > limit) {
+    entries.pop_back();
+  }
 }
 
-Map::Map(const UiStore& ui, StateHandler& state_handler)
+namespace {
+const char*
+heading_name(msg::Heading heading)
+{
+  switch (heading) {
+    case msg::Heading::PosX:
+      return "+X";
+    case msg::Heading::PosY:
+      return "+Y";
+    case msg::Heading::NegX:
+      return "-X";
+    case msg::Heading::NegY:
+      return "-Y";
+  }
+  return "?";
+}
+
+// raylib rotates clockwise on screen; the arrow image points up (+Y).
+float
+screen_degrees(double heading_rad)
+{
+  return static_cast<float>(90.0 - heading_rad * 180.0 / PI);
+}
+}
+
+Map::Map(const UiStore& ui,
+         StateHandler& state_handler,
+         const MineMap& mines,
+         Wire& wire,
+         MessageLog& log)
   : Section(ui,
             ui.map.bounds.resolve(ui.content_rect()),
             "Field Map",
             ui.map.color)
+  , mines(mines)
+  , wire(wire)
+  , log(log)
 {
-  const Rectangle rec = get_rec(ui.section_padding);
-  const float cell_width = rec.width / UiStore::grid_size;
-  const float cell_height = rec.height / UiStore::grid_size;
   for (int y = 0; y < UiStore::grid_size; ++y) {
     for (int x = 0; x < UiStore::grid_size; ++x) {
-      const Rectangle cell_rect{
-        rec.x + x * cell_width, rec.y + y * cell_height, cell_width, cell_height
-      };
-      auto cell = std::make_unique<MapCell>(ui, cell_rect, state_handler);
-      cells[y * UiStore::grid_size + x] = cell.get();
-      children.push_back(std::move(cell));
+      const Cell cell{ x, y };
+      auto drawable = std::make_unique<MapCell>(
+        ui, cell_rec(cell), state_handler, mines, cell);
+      cells[y * UiStore::grid_size + x] = drawable.get();
+      children.push_back(std::move(drawable));
     }
   }
+
+  const auto file =
+    std::filesystem::path(GetApplicationDirectory()) / "assets/icons/arrow.png";
+  arrow = LoadTexture(file.string().c_str());
+  if (arrow.id == 0) {
+    throw std::runtime_error("Unable to load arrow icon: " + file.string());
+  }
+  SetTextureFilter(arrow, TEXTURE_FILTER_BILINEAR);
+
+  connections.push_back(state_handler.register_mouse_click(
+    [this](auto position) { select(position); }, MOUSE_BUTTON_RIGHT));
+  const std::array<std::pair<int, msg::Heading>, 4> headings{
+    { { KEY_UP, msg::Heading::PosY },
+      { KEY_RIGHT, msg::Heading::PosX },
+      { KEY_DOWN, msg::Heading::NegY },
+      { KEY_LEFT, msg::Heading::NegX } }
+  };
+  for (const auto& [key, heading] : headings) {
+    connections.push_back(
+      state_handler.register_key_press(key, [this, heading] {
+        if (reset_cell) {
+          reset_heading = heading;
+          update_prompt();
+        }
+      }));
+  }
+  for (int key : { KEY_ENTER, KEY_KP_ENTER }) {
+    connections.push_back(
+      state_handler.register_key_press(key, [this] { send_reset(); }));
+  }
+  connections.push_back(
+    state_handler.register_key_press(KEY_ESCAPE, [this] { cancel_reset(); }));
+}
+
+Map::~Map()
+{
+  UnloadTexture(arrow);
+}
+
+Rectangle
+Map::field_rec() const
+{
+  return get_rec(ui.section_padding);
+}
+
+Rectangle
+Map::cell_rec(Cell cell) const
+{
+  // Map +Y is up; screen rows grow downwards.
+  const Rectangle rec = field_rec();
+  const float width = rec.width / UiStore::grid_size;
+  const float height = rec.height / UiStore::grid_size;
+  return { rec.x + cell.x * width,
+           rec.y + (UiStore::grid_size - 1 - cell.y) * height,
+           width,
+           height };
 }
 
 void
@@ -272,12 +364,124 @@ Map::draw_children(float dt)
   if (hovered_cell) {
     hovered_cell->draw(dt);
   }
+  draw_reset();
+  draw_robot();
 }
 
-MapCell&
-Map::cell_at(int x, int y)
+void
+Map::draw_arrow(Vector2 center, float size, float degrees, Color tint) const
 {
-  return *cells[y * UiStore::grid_size + x];
+  DrawTexturePro(arrow,
+                 { 0, 0, float(arrow.width), float(arrow.height) },
+                 { center.x, center.y, size, size },
+                 { size / 2, size / 2 },
+                 degrees,
+                 tint);
+}
+
+void
+Map::draw_robot() const
+{
+  const auto link = wire.link();
+  if (!link.telemetry || link.telemetry->localization_age_ms == msg::never) {
+    return;
+  }
+  // A stale pose stays visible but faded.
+  const bool fresh = link_health(link).localization;
+  const Rectangle rec = field_rec();
+  const double field = mines.config().field_size_m;
+  const Vector2 center{
+    rec.x + float(link.telemetry->x / field) * rec.width,
+    rec.y + rec.height - float(link.telemetry->y / field) * rec.height
+  };
+  const float size =
+    std::min(rec.width, rec.height) / UiStore::grid_size * 0.9f;
+  BeginScissorMode(int(rec.x), int(rec.y), int(rec.width), int(rec.height));
+  DrawCircleV(center, size / 2, Fade(ui.robot, fresh ? 1.0f : 0.4f));
+  draw_arrow(center,
+             size * 0.75f,
+             screen_degrees(link.telemetry->heading_rad),
+             Fade(ui.background, fresh ? 1.0f : 0.6f));
+  EndScissorMode();
+}
+
+void
+Map::draw_reset() const
+{
+  if (!reset_cell) {
+    return;
+  }
+  const Rectangle rec = cell_rec(*reset_cell);
+  DrawRectangleRoundedLinesEx(rec, ui.roundness, 0, 3, ui.selection);
+  if (reset_heading) {
+    draw_arrow({ rec.x + rec.width / 2, rec.y + rec.height / 2 },
+               std::min(rec.width, rec.height) * 0.9f,
+               screen_degrees(std::uint8_t(*reset_heading) * PI / 2),
+               ui.selection);
+  }
+}
+
+void
+Map::select(std::pair<float, float> position)
+{
+  const Rectangle rec = field_rec();
+  if (!is_inside(position, rec)) {
+    return;
+  }
+  const int column =
+    int((position.first - rec.x) / rec.width * UiStore::grid_size);
+  const int row =
+    int((position.second - rec.y) / rec.height * UiStore::grid_size);
+  reset_cell = Cell{ std::clamp(column, 0, UiStore::grid_size - 1),
+                     std::clamp(UiStore::grid_size - 1 - row,
+                                0,
+                                UiStore::grid_size - 1) };
+  reset_heading.reset();
+  update_prompt();
+}
+
+void
+Map::send_reset()
+{
+  if (!reset_cell || !reset_heading) {
+    return;
+  }
+  const auto [x, y] = mines.center_of(*reset_cell);
+  wire.send_reset(x, y, *reset_heading);
+  log.add(fmt::format("Pose reset sent: ({:.2f}, {:.2f}) m, heading {}",
+                      x,
+                      y,
+                      heading_name(*reset_heading)));
+  cancel_reset();
+}
+
+void
+Map::cancel_reset()
+{
+  reset_cell.reset();
+  reset_heading.reset();
+  update_prompt();
+}
+
+void
+Map::update_prompt()
+{
+  if (!reset_cell) {
+    log.set_prompt({});
+    return;
+  }
+  const auto [x, y] = mines.center_of(*reset_cell);
+  log.set_prompt(
+    reset_heading
+      ? fmt::format("Reset pose to ({:.2f}, {:.2f}) m facing {}: Enter sends, "
+                    "Esc cancels",
+                    x,
+                    y,
+                    heading_name(*reset_heading))
+      : fmt::format("Reset pose to ({:.2f}, {:.2f}) m: choose a heading with "
+                    "the arrow keys, Esc cancels",
+                    x,
+                    y));
 }
 
 CameraFeed::CameraFeed(const UiStore& ui, GstCamera& camera, Rectangle feed_rec)
@@ -308,205 +512,13 @@ Feed::Feed(const UiStore& ui, GstCamera& camera)
     std::make_unique<CameraFeed>(ui, camera, get_rec(ui.section_padding)));
 }
 
-CommandMeter::CommandMeter(const UiStore& ui,
-                           Rectangle rec,
-                           const DriveController& drive,
-                           DriveChannel channel)
-  : Drawable(ui, rec)
-  , drive(drive)
-  , channel(channel)
-{
-}
-
-void
-CommandMeter::self_draw()
-{
-  const auto rec = get_rec();
-  const auto& command = drive.state();
-  const bool linear = channel == DriveChannel::linear;
-  const float thrust = linear ? command.linear : command.angular;
-  const int font = ui.control_font;
-  // Turn signs follow ROS: positive is a left (counterclockwise) turn.
-  const char* positive = linear ? "+ Forward" : "+ Left";
-  const char* negative = linear ? "- Reverse" : "- Right";
-  draw_text(positive,
-            rec.x + (rec.width - measure_text(positive, font)) / 2,
-            rec.y,
-            font,
-            ui.text);
-  draw_text(negative,
-            rec.x + (rec.width - measure_text(negative, font)) / 2,
-            rec.y + rec.height - font,
-            font,
-            ui.text);
-  const float track_top = rec.y + font + 6;
-  const float track_height = rec.height - 2 * font - 12;
-  const Rectangle track{ rec.x + 8, track_top, 26, track_height };
-  DrawRectangleRounded(track, ui.roundness, 0, ui.control_surface);
-  const float fill_height = track.height * std::abs(thrust) / drive.limit() / 2;
-  if (fill_height > 0) {
-    DrawRectangleRec(
-      { track.x,
-        track.y + track.height / 2 - (thrust > 0 ? fill_height : 0),
-        track.width,
-        fill_height },
-      command.locked ? ui.thrust_locked : ui.thrust);
-  }
-  DrawLineEx({ track.x, track.y + track.height / 2 },
-             { track.x + track.width, track.y + track.height / 2 },
-             1,
-             ui.unchecked);
-  const auto value = fmt::format("{:+.0f}", thrust == 0 ? 0.0f : thrust);
-  draw_text(value.c_str(),
-            track.x + track.width + 10,
-            track.y + (track.height - font) / 2,
-            font,
-            ui.text);
-}
-
-DriveControls::DriveControls(const UiStore& ui,
-                             Rectangle rec,
-                             const DriveController& drive,
-                             const DriveInput& input)
-  : Drawable(ui, rec)
-  , drive(drive)
-  , input(input)
-  , positions(calculate_layout())
-{
-  children.push_back(std::make_unique<CommandMeter>(
-    ui, positions.meters[0], drive, DriveChannel::linear));
-  children.push_back(std::make_unique<CommandMeter>(
-    ui, positions.meters[1], drive, DriveChannel::angular));
-  const auto file = std::filesystem::path(GetApplicationDirectory()) /
-                    "assets/icons/turn-right.png";
-  Image icon = LoadImage(file.string().c_str());
-  if (!icon.data) {
-    throw std::runtime_error("Unable to load turn icon: " + file.string());
-  }
-  ImageColorInvert(&icon); // White pixels allow tinting with the UI text color.
-  turn_arrow = LoadTextureFromImage(icon);
-  UnloadImage(icon);
-  if (turn_arrow.id == 0) {
-    throw std::runtime_error("Unable to load turn icon: " + file.string());
-  }
-  SetTextureFilter(turn_arrow, TEXTURE_FILTER_BILINEAR);
-}
-
-DriveControls::~DriveControls()
-{
-  UnloadTexture(turn_arrow);
-}
-
-DriveLayout
-DriveControls::calculate_layout() const
-{
-  const auto rec = get_rec();
-  const float body_height = rec.height - ui.lock_height - ui.control_gap;
-  const float meter_width = ui.drive_meter_width();
-  const float arrow =
-    std::min({ float(ui.arrow_size),
-               (body_height - 2 * ui.arrow_gap) / 3,
-               (rec.width - ui.pad_meter_gap - 2 * meter_width - ui.meter_gap -
-                2 * ui.arrow_gap) /
-                 3 });
-  const float pad_width = 3 * arrow + 2 * ui.arrow_gap;
-  const float group_width =
-    pad_width + ui.pad_meter_gap + 2 * meter_width + ui.meter_gap;
-  const float start_x = rec.x + (rec.width - group_width) / 2;
-  const float start_y = rec.y + (body_height - pad_width) / 2;
-  DriveLayout result;
-  result.arrows = { { { start_x + arrow + ui.arrow_gap, start_y, arrow, arrow },
-                      { start_x + arrow + ui.arrow_gap,
-                        start_y + 2 * (arrow + ui.arrow_gap),
-                        arrow,
-                        arrow },
-                      { start_x, start_y + arrow + ui.arrow_gap, arrow, arrow },
-                      { start_x + 2 * (arrow + ui.arrow_gap),
-                        start_y + arrow + ui.arrow_gap,
-                        arrow,
-                        arrow } } };
-  const float meter_x = start_x + pad_width + ui.pad_meter_gap;
-  result.meters = { { { meter_x, rec.y, meter_width, body_height },
-                      { meter_x + meter_width + ui.meter_gap,
-                        rec.y,
-                        meter_width,
-                        body_height } } };
-  result.lock = {
-    rec.x, rec.y + rec.height - ui.lock_height, rec.width, ui.lock_height
-  };
-  return result;
-}
-
-void
-DriveControls::self_draw()
-{
-  const std::array<bool, 4> held{
-    input.up, input.down, input.left, input.right
-  };
-  const std::array<Vector2, 4> directions{
-    { { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }
-  };
-  for (std::size_t index = 0; index < held.size(); ++index) {
-    const auto rec = positions.arrows[index];
-    DrawRectangleRounded(rec,
-                         ui.roundness,
-                         0,
-                         held[index] ? ui.controls.color : ui.control_surface);
-    const Vector2 center{ rec.x + rec.width / 2, rec.y + rec.height / 2 };
-    const float icon_scale = std::min(rec.width, rec.height) / 48;
-    if (index >= 2) {
-      const float size = 32 * icon_scale;
-      DrawTexturePro(turn_arrow,
-                     { 0,
-                       0,
-                       float(index == 2 ? -turn_arrow.width : turn_arrow.width),
-                       float(turn_arrow.height) },
-                     { center.x - size / 2, center.y - size / 2, size, size },
-                     { 0, 0 },
-                     0,
-                     ui.text);
-      continue;
-    }
-    const auto direction = directions[index];
-    const Vector2 side{ -direction.y, direction.x };
-    const Vector2 tip{ center.x + 10 * icon_scale * direction.x,
-                       center.y + 10 * icon_scale * direction.y };
-    const Vector2 base{ center.x + 2 * icon_scale * direction.x,
-                        center.y + 2 * icon_scale * direction.y };
-    DrawLineEx({ center.x - 8 * icon_scale * direction.x,
-                 center.y - 8 * icon_scale * direction.y },
-               base,
-               3 * icon_scale,
-               ui.text);
-    DrawTriangle(
-      tip,
-      { base.x - 6 * icon_scale * side.x, base.y - 6 * icon_scale * side.y },
-      { base.x + 6 * icon_scale * side.x, base.y + 6 * icon_scale * side.y },
-      ui.text);
-  }
-  const auto lock = positions.lock;
-  DrawRectangleRounded(lock,
-                       ui.roundness,
-                       0,
-                       drive.state().locked ? ui.thrust_locked
-                                            : ui.control_surface);
-  const char* label =
-    drive.state().locked ? "Speed lock: Locked" : "Speed lock: Unlocked";
-  draw_text(label,
-            lock.x + 10,
-            lock.y + (lock.height - ui.control_font) / 2,
-            ui.control_font,
-            ui.text);
-  draw_text("Space",
-            lock.x + lock.width - measure_text("Space", ui.control_font) - 10,
-            lock.y + (lock.height - ui.control_font) / 2,
-            ui.control_font,
-            ui.text);
-}
-
-TableControls::TableControls(const UiStore& ui, Rectangle rec, Wire& wire)
+StatusTable::StatusTable(const UiStore& ui,
+                         Rectangle rec,
+                         Wire& wire,
+                         const MineMap& mines)
   : Drawable(ui, rec)
   , wire(wire)
+  , mines(mines)
 {
 }
 
@@ -531,178 +543,109 @@ link_status(const LinkHealth& health)
 }
 
 void
-TableControls::self_draw()
+StatusTable::self_draw()
 {
   const auto link = wire.link();
   const auto health = link_health(link);
-  const std::array<const char*, 6> labels{ "Link",  "Arm",   "Pos X",
-                                           "Pos Y", "Speed", "Heading" };
+  const std::array<const char*, 8> labels{ "Link",  "Arm",   "Metal",
+                                           "Heading", "Pos X", "Pos Y",
+                                           "Surface", "Buried" };
   // Stale values stay visible but faded; missing values are never shown as
   // zeros.
-  std::array<std::string, 6> values{ link_status(health), "--", "--",
-                                     "--",                "--", "--" };
-  std::array<bool, 6> fresh{
+  std::array<std::string, 8> values{
+    link_status(health),
+    "--",
+    "--",
+    "--",
+    "--",
+    "--",
+    fmt::format("{}", mines.count(MineState::surface_mine)),
+    fmt::format("{}", mines.count(MineState::buried_mine))
+  };
+  const std::array<bool, 8> fresh{
     health.bridge && health.localization && health.hardware,
+    health.hardware,
     health.hardware,
     health.localization,
     health.localization,
     health.localization,
-    health.localization
+    true,
+    true
   };
   if (const auto& reading = link.telemetry) {
     if (reading->hardware_age_ms != msg::never) {
-      values[1] = reading->arm_upright ? "Upright" : "Not upright";
+      values[1] = reading->arm_upright ? "Upright" : "Lowered";
+      values[2] = reading->metal_detected ? "Detected" : "Clear";
     }
     if (reading->localization_age_ms != msg::never) {
-      values[2] = fmt::format("{:.2f} m", reading->x);
-      values[3] = fmt::format("{:.2f} m", reading->y);
-      values[4] = fmt::format("{:.2f} m/s", reading->speed_mps);
-      values[5] =
-        fmt::format("{:.0f} deg", reading->heading_rad * 180 / PI);
+      values[3] = fmt::format("{:.0f} deg", reading->heading_rad * 180 / PI);
+      values[4] = fmt::format("{:.2f} m", reading->x);
+      values[5] = fmt::format("{:.2f} m", reading->y);
     }
   }
   const auto rec = get_rec();
-  const float column_width = (rec.width - 14) / 2;
-  const float row_height = rec.height / 3;
+  const int font = ui.status_font;
+  const float column_gap = 14;
+  const float column_width = (rec.width - column_gap) / 2;
+  const float row_height = rec.height / 4;
   for (std::size_t index = 0; index < labels.size(); ++index) {
-    const float x = rec.x + (index % 2) * (column_width + 14);
-    const float y =
-      rec.y + (index / 2) * row_height + (row_height - ui.control_font) / 2;
-    draw_text(labels[index], x, y, ui.control_font, ui.text);
+    const float x = rec.x + (index % 2) * (column_width + column_gap);
+    const float y = rec.y + (index / 2) * row_height + (row_height - font) / 2;
+    draw_text(labels[index], x, y, font, ui.text);
     draw_text(values[index].c_str(),
-              x + column_width -
-                measure_text(values[index].c_str(), ui.control_font),
+              x + column_width - measure_text(values[index].c_str(), font),
               y,
-              ui.control_font,
+              font,
               fresh[index] ? ui.text : Fade(ui.text, 0.4f));
   }
 }
 
-PickupControl::PickupControl(const UiStore& ui,
-                             Rectangle rec,
-                             StateHandler& handler,
-                             Wire& wire,
-                             PickupController& controller)
+Status::Status(const UiStore& ui, Wire& wire, const MineMap& mines)
+  : Section(ui,
+            ui.status.bounds.resolve(ui.content_rect()),
+            "Status",
+            ui.status.color)
+{
+  children.push_back(std::make_unique<StatusTable>(
+    ui, get_rec(ui.section_padding), wire, mines));
+}
+
+MessageList::MessageList(const UiStore& ui,
+                         Rectangle rec,
+                         const MessageLog& log)
   : Drawable(ui, rec)
-  , controller(controller)
-  , wire(wire)
-  , handler(handler)
+  , log(log)
 {
-  connections[0] =
-    handler.register_key_press(KEY_J, [this] { requested = true; });
-  connections[1] = handler.register_mouse_click([this](auto position) {
-    requested = requested || is_inside(position, get_rec());
-  });
 }
 
 void
-PickupControl::self_update(float dt)
-{
-  const auto link = wire.link();
-  controller.update({ .requested = requested,
-                      .arm_upright = arm_upright(link, link_health(link)),
-                      .focused = handler.is_focused() },
-                    dt);
-  requested = false;
-  if (controller.take_command()) {
-    wire.send_pickup();
-  }
-}
-
-void
-PickupControl::self_draw()
+MessageList::self_draw()
 {
   const auto rec = get_rec();
-  const auto& state = controller.state();
-  const Color fill = state.arm_upright ? ui.thrust_locked : ui.unchecked;
-  const Color text = state.arm_upright ? ui.text : Fade(ui.text, 0.6f);
-  DrawRectangleRounded(rec, ui.roundness, 0, fill);
-  if (state.rejected_remaining > 0) {
-    const float strength =
-      state.rejected_remaining / PickupController::rejected_flash_seconds;
-    DrawRectangleRoundedLinesEx(
-      rec, ui.roundness, 0, 4, Fade(ui.thrust, strength));
+  const int font = ui.status_font;
+  const float line_height = font + 4.0f;
+  float y = rec.y;
+  BeginScissorMode(int(rec.x), int(rec.y), int(rec.width), int(rec.height));
+  if (!log.prompt().empty()) {
+    draw_text(log.prompt().c_str(), rec.x, y, font, ui.selection);
+    y += line_height;
   }
-  const char* title = "Pick up mine";
-  const char* shortcut = "J";
-  const char* subtitle = state.arm_upright ? "Arm upright" : "Arm not upright";
-  const float gap = 16;
-  const float title_width = measure_text(title, ui.title_font);
-  const float row_width = title_width + gap + measure_text(shortcut, ui.title_font);
-  const float block_height = ui.title_font + 6 + ui.control_font;
-  const float top = rec.y + (rec.height - block_height) / 2;
-  const float x = rec.x + (rec.width - row_width) / 2;
-  draw_text(title, x, top, ui.title_font, text);
-  draw_text(shortcut, x + title_width + gap, top, ui.title_font, text);
-  draw_text(subtitle,
-            rec.x + (rec.width - measure_text(subtitle, ui.control_font)) / 2,
-            top + ui.title_font + 6,
-            ui.control_font,
-            text);
-}
-
-Controls::Controls(const UiStore& ui,
-                   Wire& wire,
-                   StateHandler& handler,
-                   DriveController& drive,
-                   PickupController& pickup)
-  : Section(ui,
-            ui.controls.bounds.resolve(ui.content_rect()),
-            "Controls",
-            ui.controls.color)
-  , drive(drive)
-  , wire(wire)
-  , handler(handler)
-{
-  const std::array<int, 8> keys{ KEY_UP,   KEY_W, KEY_DOWN,  KEY_S,
-                                 KEY_LEFT, KEY_A, KEY_RIGHT, KEY_D };
-  for (std::size_t index = 0; index < keys.size(); ++index) {
-    key_connections[index] = handler.register_key_down(
-      keys[index], [this, index](bool down) { held_keys[index] = down; });
+  for (const auto& line : log.lines()) {
+    if (y + font > rec.y + rec.height) {
+      break;
+    }
+    draw_text(line.c_str(), rec.x, y, font, ui.text);
+    y += line_height;
   }
-  key_connections[8] =
-    handler.register_key_press(KEY_SPACE, [this] { lock_requested = true; });
-  const auto rec = get_rec(ui.section_padding);
-  const float table_height = rec.height * ui.table_fraction;
-  const float pickup_height = ui.pickup_height();
-  children.push_back(std::make_unique<TableControls>(
-    ui, Rectangle{ rec.x, rec.y, rec.width, table_height }, wire));
-  children.push_back(std::make_unique<DriveControls>(
-    ui,
-    Rectangle{ rec.x,
-               rec.y + table_height + ui.control_gap,
-               rec.width,
-               rec.height - table_height - pickup_height -
-                 2 * ui.control_gap },
-    drive,
-    input));
-  children.push_back(std::make_unique<PickupControl>(
-    ui,
-    Rectangle{
-      rec.x, rec.y + rec.height - pickup_height, rec.width, pickup_height },
-    handler,
-    wire,
-    pickup));
+  EndScissorMode();
 }
 
-void
-Controls::self_update(float dt)
-{
-  input = { held_keys[0] || held_keys[1],
-            held_keys[2] || held_keys[3],
-            held_keys[4] || held_keys[5],
-            held_keys[6] || held_keys[7],
-            lock_requested,
-            handler.is_focused() };
-  lock_requested = false;
-  drive.update(input, dt);
-  wire.set_drive(drive.state().linear, drive.state().angular);
-}
-
-Warnings::Warnings(const UiStore& ui)
+Messages::Messages(const UiStore& ui, const MessageLog& log)
   : Section(ui,
-            ui.warnings.bounds.resolve(ui.content_rect()),
-            "Warnings & Messages",
-            ui.warnings.color)
+            ui.messages.bounds.resolve(ui.content_rect()),
+            "Messages",
+            ui.messages.color)
 {
+  children.push_back(
+    std::make_unique<MessageList>(ui, get_rec(ui.section_padding), log));
 }

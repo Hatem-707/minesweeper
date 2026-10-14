@@ -27,7 +27,3 @@ inline constexpr std::uint32_t stale_after_ms = 500;
 // A stale source is never healthy, whatever its last reported values were.
 LinkHealth
 link_health(const RobotLink& link, std::int64_t now_ns = msg::monotonic_ns());
-
-// Stale or missing hardware feedback reads as not upright, which blocks pickup.
-bool
-arm_upright(const RobotLink& link, const LinkHealth& health);

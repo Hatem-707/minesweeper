@@ -15,9 +15,3 @@ link_health(const RobotLink& link, std::int64_t now_ns)
     link.vision && now_ns - link.vision_received_ns <= stale_after_ns;
   return health;
 }
-
-bool
-arm_upright(const RobotLink& link, const LinkHealth& health)
-{
-  return health.hardware && link.telemetry->arm_upright == 1;
-}

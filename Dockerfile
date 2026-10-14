@@ -39,3 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cppzmq-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# IMU test reader (ros_vol/src/imu_serial_test) and filter unit tests
+# (ros_vol/src/minesweeper_imu_filter). Kept last so earlier layers stay cached.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-serial \
+    ros-lyrical-ament-cmake-gtest \
+    && rm -rf /var/lib/apt/lists/*

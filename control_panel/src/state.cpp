@@ -33,27 +33,16 @@ void
 StateHandler::handle_input()
 {
   const bool focused = IsWindowFocused();
-  window_focused = focused;
   for (auto& [key, events] : key_pressed_events) {
     prune(events);
   }
   std::erase_if(key_pressed_events,
-                [](const auto& entry) { return entry.second.empty(); });
-  for (auto& [key, events] : key_down_events) {
-    prune(events);
-  }
-  std::erase_if(key_down_events,
                 [](const auto& entry) { return entry.second.empty(); });
   prune(mouse_motion_events);
   for (auto& [button, events] : mouse_click_events) {
     prune(events);
   }
   std::erase_if(mouse_click_events,
-                [](const auto& entry) { return entry.second.empty(); });
-  for (auto& [button, events] : mouse_down_events) {
-    prune(events);
-  }
-  std::erase_if(mouse_down_events,
                 [](const auto& entry) { return entry.second.empty(); });
 
   const auto position = GetMousePosition();
@@ -70,15 +59,9 @@ StateHandler::handle_input()
   // Snapshot registrations before invoking callbacks: callbacks may register
   // new listeners or destroy other listeners during this frame.
   const auto keys = key_pressed_events;
-  const auto down_events = key_down_events;
   const auto motions = mouse_motion_events;
   const auto clicks = mouse_click_events;
-  const auto mouse_down = mouse_down_events;
   std::vector<int> pressed_keys;
-  std::vector<std::pair<int, bool>> down_keys;
-  for (const auto& [key, events] : down_events) {
-    down_keys.emplace_back(key, focused && IsKeyDown(key));
-  }
   if (focused) {
     for (const auto& [key, events] : keys) {
       if (IsKeyPressed(key)) {
@@ -87,11 +70,6 @@ StateHandler::handle_input()
     }
   }
   std::vector<int> clicked_buttons;
-  std::vector<std::pair<int, bool>> held_buttons;
-  for (const auto& [button, events] : mouse_down) {
-    held_buttons.emplace_back(button,
-                              cursor_available && IsMouseButtonDown(button));
-  }
   if (cursor_available) {
     for (const auto& [button, events] : clicks) {
       if (IsMouseButtonPressed(button)) {
@@ -102,9 +80,6 @@ StateHandler::handle_input()
 
   for (int key : pressed_keys) {
     dispatch(keys.at(key));
-  }
-  for (const auto& [key, down] : down_keys) {
-    dispatch(down_events.at(key), down);
   }
   if (mouse_changed) {
     // An unavailable cursor must miss every element, even if raylib retains
@@ -117,9 +92,6 @@ StateHandler::handle_input()
   for (int button : clicked_buttons) {
     dispatch(clicks.at(button), mouse_position);
   }
-  for (const auto& [button, down] : held_buttons) {
-    dispatch(mouse_down.at(button), mouse_position, down);
-  }
 }
 
 InputConnection
@@ -128,13 +100,6 @@ StateHandler::register_key_press(int key, KeyCallback callback)
   return is_valid_key(key)
            ? connect(key_pressed_events[key], std::move(callback))
            : InputConnection{};
-}
-
-InputConnection
-StateHandler::register_key_down(int key, KeyDownCallback callback)
-{
-  return is_valid_key(key) ? connect(key_down_events[key], std::move(callback))
-                           : InputConnection{};
 }
 
 InputConnection
@@ -152,13 +117,4 @@ StateHandler::register_mouse_click(MouseCallback callback, int button)
     return {};
   }
   return connect(mouse_click_events[button], std::move(callback));
-}
-
-InputConnection
-StateHandler::register_mouse_down(MouseDownCallback callback, int button)
-{
-  if (button < MOUSE_BUTTON_LEFT || button > MOUSE_BUTTON_BACK) {
-    return {};
-  }
-  return connect(mouse_down_events[button], std::move(callback));
 }

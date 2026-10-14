@@ -1,9 +1,10 @@
-# Controller tests
+# Tests
 
-The GoogleTest suite covers drive ramping, limits, direction changes, speed lock,
-and focus loss, plus pickup gating on the arm-upright switch. These tests run without
-raylib, a window, or a camera. UI rendering, configuration parsing, font, and
-animation tests are not maintained.
+The GoogleTest suite covers the IPC messages, the ZeroMQ wire (reset sending,
+telemetry and vision receipt), link health, and the mine map: trail marking,
+detector offset, surface/buried classification by the arm window, merging,
+and stale-input handling. These tests run without raylib, a window, or a
+camera. UI rendering, configuration parsing, and font tests are not maintained.
 
 From the repository root:
 

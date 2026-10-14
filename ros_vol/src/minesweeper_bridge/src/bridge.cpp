@@ -1,6 +1,7 @@
 // Translates the control panel's ZeroMQ contract (protocol/include/
 // minesweeper/messages.hpp) to ROS 2 topics and back. Translation only: no
-// mapping or sensor fusion happens here. See ROS_CONTRACT.md.
+// mapping or sensor fusion happens here. The robot is driven by RC, so the
+// only command is ResetPose. See ROS_CONTRACT.md.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -13,10 +14,8 @@
 #include <zmq.hpp>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
-#include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 
 using namespace std::chrono_literals;
@@ -61,12 +60,10 @@ class Bridge : public rclcpp::Node
   zmq::socket_t commands{ context, zmq::socket_type::pull };
   zmq::socket_t updates{ context, zmq::socket_type::pub };
 
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel;
-  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr cmd_pickup;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr reset_pose;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry;
-  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr arm;
-  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr metal;
+  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr arm;
+  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr metal;
   rclcpp::TimerBase::SharedPtr command_timer;
   rclcpp::TimerBase::SharedPtr telemetry_timer;
 
@@ -78,8 +75,6 @@ class Bridge : public rclcpp::Node
   bool metal_now = false;
   bool metal_latched = false;
 
-  std::int64_t last_drive_ns = 0;
-  bool drive_active = false;
   std::uint32_t telemetry_seq = 0;
 
 public:
@@ -97,12 +92,6 @@ public:
     bind_ipc(commands, command_endpoint);
     bind_ipc(updates, telemetry_endpoint);
 
-    cmd_vel = create_publisher<geometry_msgs::msg::Twist>(
-      "/cmd_vel",
-      rclcpp::QoS(1).best_effort().lifespan(
-        rclcpp::Duration::from_nanoseconds(msg::command_expiry_ns)));
-    cmd_pickup = create_publisher<std_msgs::msg::UInt8>(
-      "/cmd_pickup", rclcpp::QoS(1).reliable());
     reset_pose = create_publisher<geometry_msgs::msg::PoseStamped>(
       "/reset_pose", rclcpp::QoS(1).reliable().durability_volatile());
 
@@ -110,19 +99,20 @@ public:
       "/odometry/filtered",
       rclcpp::QoS(1).best_effort(),
       [this](const nav_msgs::msg::Odometry& odom) { on_odometry(odom); });
-    arm = create_subscription<std_msgs::msg::Bool>(
-      "/arm_upright",
-      rclcpp::QoS(1).best_effort(),
-      [this](const std_msgs::msg::Bool& upright) {
-        latest.arm_upright = upright.data;
+    // Best effort matches both reliable and best-effort publishers. Any
+    // nonzero value counts as 1.
+    arm = create_subscription<std_msgs::msg::UInt8>(
+      "/contact_switch",
+      rclcpp::QoS(10).best_effort(),
+      [this](const std_msgs::msg::UInt8& upright) {
+        latest.arm_upright = upright.data != 0;
         arm_ns = msg::monotonic_ns();
       });
-    // Reliable: the publisher must be reliable too, or no samples arrive.
-    metal = create_subscription<std_msgs::msg::Bool>(
-      "/metal_detected",
-      rclcpp::QoS(20).reliable(),
-      [this](const std_msgs::msg::Bool& detected) {
-        metal_now = detected.data;
+    metal = create_subscription<std_msgs::msg::UInt8>(
+      "/metal_detector",
+      rclcpp::QoS(20).best_effort(),
+      [this](const std_msgs::msg::UInt8& detected) {
+        metal_now = detected.data != 0;
         metal_latched = metal_latched || metal_now;
         metal_ns = msg::monotonic_ns();
       });
@@ -147,8 +137,6 @@ private:
     latest.x = odom.pose.pose.position.x;
     latest.y = odom.pose.pose.position.y;
     latest.heading_rad = yaw_of(odom.pose.pose.orientation);
-    latest.speed_mps = float(odom.twist.twist.linear.x);
-    latest.yaw_rate_rps = float(odom.twist.twist.angular.z);
     odometry_ns = msg::monotonic_ns();
   }
 
@@ -158,37 +146,12 @@ private:
     while (commands.recv(frame, zmq::recv_flags::dontwait)) {
       handle_command(frame);
     }
-    // Stop once when the control panel goes quiet; never replay old drive.
-    if (drive_active &&
-        msg::monotonic_ns() - last_drive_ns > msg::command_expiry_ns) {
-      drive_active = false;
-      cmd_vel->publish(geometry_msgs::msg::Twist{});
-      RCLCPP_WARN(get_logger(), "Drive commands stopped; sent zero velocity");
-    }
   }
 
   void handle_command(const zmq::message_t& frame)
   {
     const auto now = msg::monotonic_ns();
     switch (msg::peek_type(frame).value_or(msg::MessageType{})) {
-      case msg::MessageType::Drive:
-        if (const auto drive = valid<msg::Drive>(frame, now)) {
-          geometry_msgs::msg::Twist twist;
-          twist.linear.x = drive->forward;
-          twist.angular.z = drive->left;
-          cmd_vel->publish(twist);
-          last_drive_ns = now;
-          drive_active = true;
-        }
-        break;
-      case msg::MessageType::Pickup:
-        if (valid<msg::Pickup>(frame, now)) {
-          std_msgs::msg::UInt8 pickup;
-          pickup.data = 1;
-          cmd_pickup->publish(pickup);
-          RCLCPP_INFO(get_logger(), "Pickup requested");
-        }
-        break;
       case msg::MessageType::ResetPose:
         if (const auto reset = valid<msg::ResetPose>(frame, now)) {
           publish_reset(*reset);

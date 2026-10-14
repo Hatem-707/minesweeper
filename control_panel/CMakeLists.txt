@@ -7,10 +7,8 @@ foreach(FONT_ASSET Roboto-Regular.ttf LICENSE-Roboto.txt)
   configure_file("assets/fonts/${FONT_ASSET}"
     "${CMAKE_CURRENT_BINARY_DIR}/assets/fonts/${FONT_ASSET}" COPYONLY)
 endforeach()
-foreach(ICON_ASSET turn-right.png LICENSE-Material-Icons.txt)
-  configure_file("assets/icons/${ICON_ASSET}"
-    "${CMAKE_CURRENT_BINARY_DIR}/assets/icons/${ICON_ASSET}" COPYONLY)
-endforeach()
+configure_file("assets/icons/arrow.png"
+  "${CMAKE_CURRENT_BINARY_DIR}/assets/icons/arrow.png" COPYONLY)
 
 # Uncomment to download raylib
 # include(FetchContent)
@@ -71,18 +69,16 @@ include(CTest)
 if(BUILD_TESTING)
   find_package(GTest CONFIG REQUIRED)
   add_executable(controller_tests
-    tests/drive_tests.cpp
-    tests/pickup_tests.cpp
     tests/messages_tests.cpp
+    tests/mine_map_tests.cpp
     tests/wire_tests.cpp
-    src/pickup.cpp
-    src/drive.cpp
     src/link.cpp
+    src/mine_map.cpp
     src/wire.cpp
   )
   target_include_directories(controller_tests PRIVATE src ${PROTOCOL_INCLUDE})
   target_compile_options(controller_tests PRIVATE -Wall -Wextra -Wpedantic)
-  target_link_libraries(controller_tests PRIVATE GTest::gtest_main libzmq)
+  target_link_libraries(controller_tests PRIVATE GTest::gtest_main fmt libzmq)
   include(GoogleTest)
   gtest_discover_tests(controller_tests)
 endif()

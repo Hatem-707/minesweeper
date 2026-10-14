@@ -1,5 +1,5 @@
 #pragma once
-// GUI <-> ROS bridge <-> vision IPC contract, v1. See ROS_CONTRACT.md.
+// GUI <-> ROS bridge <-> vision IPC contract, v2. See ROS_CONTRACT.md.
 //
 // One ZeroMQ frame carries one packed struct that starts with Header. The
 // first byte is the MessageType, so SUB sockets can prefix-filter on it.
@@ -17,11 +17,9 @@
 #include <zmq.hpp>
 
 namespace msg {
-inline constexpr std::uint8_t protocol_version = 1;
+inline constexpr std::uint8_t protocol_version = 2;
 // Age reported before a source's first sample.
 inline constexpr std::uint32_t never = std::numeric_limits<std::uint32_t>::max();
-// Signed motor-command limit for Drive::forward and Drive::left.
-inline constexpr float drive_limit = 255;
 // Commands older than this on receipt are dropped, never replayed.
 inline constexpr std::int64_t command_expiry_ns = 200'000'000;
 
@@ -36,8 +34,6 @@ static_assert(std::endian::native == std::endian::little);
 enum class MessageType : std::uint8_t
 {
   // GUI -> bridge
-  Drive = 1,
-  Pickup = 2,
   ResetPose = 3,
   // bridge -> GUI
   Telemetry = 16,
@@ -63,22 +59,6 @@ struct Header
   std::int64_t sent_ns; // Sender CLOCK_MONOTONIC.
 };
 
-// Sent at 20 Hz while running, including zeros and while speed-locked.
-// Motor commands, not velocities. Signs follow ROS (REP 103); the bridge
-// copies them to Twist.linear.x and Twist.angular.z unchanged.
-struct Drive
-{
-  Header header;
-  float forward; // [-drive_limit, drive_limit], positive forward.
-  float left;    // [-drive_limit, drive_limit], positive turns left (CCW).
-};
-
-// Sent once per accepted press; the message type is the command.
-struct Pickup
-{
-  Header header;
-};
-
 // Operator anchor reset of the localization base pose.
 struct ResetPose
 {
@@ -96,10 +76,8 @@ struct Telemetry
   std::uint32_t hardware_age_ms;     // Since the staler of arm/metal samples.
   double x;                          // Map metres.
   double y;
-  double heading_rad;   // Counterclockwise from +X.
-  float speed_mps;      // Signed forward speed.
-  float yaw_rate_rps;   // Positive turns left.
-  std::uint8_t arm_upright;
+  double heading_rad; // Counterclockwise from +X.
+  std::uint8_t arm_upright; // /contact_switch: the arm is upright.
   std::uint8_t metal_detected; // OR of every sample since the last Telemetry.
 };
 
@@ -114,24 +92,12 @@ struct Vision
 #pragma pack(pop)
 
 static_assert(sizeof(Header) == 14);
-static_assert(sizeof(Drive) == 22);
-static_assert(sizeof(Pickup) == 14);
 static_assert(sizeof(ResetPose) == 31);
-static_assert(sizeof(Telemetry) == 56);
+static_assert(sizeof(Telemetry) == 48);
 static_assert(sizeof(Vision) == 27);
 
 template<typename T>
 struct TypeOf;
-template<>
-struct TypeOf<Drive>
-{
-  static constexpr MessageType value = MessageType::Drive;
-};
-template<>
-struct TypeOf<Pickup>
-{
-  static constexpr MessageType value = MessageType::Pickup;
-};
 template<>
 struct TypeOf<ResetPose>
 {
@@ -168,24 +134,6 @@ is_flag(std::uint8_t value)
 }
 
 inline bool
-is_drive_value(float value)
-{
-  return std::isfinite(value) && std::abs(value) <= drive_limit;
-}
-
-inline bool
-is_valid(const Drive& m)
-{
-  return is_drive_value(m.forward) && is_drive_value(m.left);
-}
-
-inline bool
-is_valid(const Pickup&)
-{
-  return true;
-}
-
-inline bool
 is_valid(const ResetPose& m)
 {
   return std::isfinite(m.x) && std::isfinite(m.y) &&
@@ -196,8 +144,7 @@ inline bool
 is_valid(const Telemetry& m)
 {
   return std::isfinite(m.x) && std::isfinite(m.y) &&
-         std::isfinite(m.heading_rad) && std::isfinite(m.speed_mps) &&
-         std::isfinite(m.yaw_rate_rps) && is_flag(m.arm_upright) &&
+         std::isfinite(m.heading_rad) && is_flag(m.arm_upright) &&
          is_flag(m.metal_detected);
 }
 

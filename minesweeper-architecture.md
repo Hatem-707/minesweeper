@@ -51,7 +51,7 @@ USB Camera ────┼──> Raspberry Pi 4 (Dockerized, ROS 2)
 ESP32 ──UART(COBS, packed)──┘
         │
         ├─ ROS 2: Kalman Filter        → /pose
-        ├─ ROS 2: IMU (Madgwick)       → filtered IMU
+        ├─ ROS 2: IMU reader           → /imu/data_raw (raw gyro/accel, fused directly by the Kalman filter)
         ├─ ROS 2: Hardware Interface   → odom
         ├─ ROS 2: Decision & State     → /detection_raw
         └─ RTSP Video Streamer         → RTSP stream (video, outside DDS)
@@ -103,7 +103,7 @@ All bridge ↔ GUI communication occurs over a **single UDS**.
 - **Ultra-Low Latency**: bypasses the network stack; near-zero-latency IPC for high-frequency telemetry/control
 - **Decoupled Processing**: bridge and GUI are separate processes — heavy ROS 2/ONNX workloads cannot freeze the GUI
 - **Consolidated Data Stream**: bridge aggregates pose, detection flags, vision results, and other state into a single binary or JSON protocol
-- **Bidirectional Command Channel**: same socket carries velocity commands and reset signals from GUI → bridge → Pi (over ROS 2)
+- **Bidirectional Command Channel**: same socket carries velocity commands and manual position/heading fixes from GUI → bridge → Pi (over ROS 2)
 - **Future Jetson Migration**: bridge+ONNX stack could move onboard to an NVIDIA Jetson; UDS would be replaced by a TCP proxy, but GUI code is unchanged since the protocol stays identical
 
 ---
@@ -113,10 +113,16 @@ All bridge ↔ GUI communication occurs over a **single UDS**.
 ### 5.1 Localization (Kalman Filter)
 
 - No absolute positioning (no GPS) — deliberately excluded to reduce complexity/inaccuracy.
+- **One 2D EKF, no Madgwick stage.** State `[x, y, θ, v, ω, b_gz]` (b_gz = gyro Z bias). Rationale, evidence and tuning values: `docs/research/2026-10-14-imu-fusion-madgwick-vs-kalman.md`.
 - Fuses:
-  1. **Wheel Odometry** — collected by ESP32, forwarded to hardware interface
-  2. **Inertial Data** — processed through a Madgwick filter from the onboard I2C IMU
-- **Drift correction**: Base Station GUI provides a manual reset mechanism. Operators use physical grid corners as anchor points. On reset command (sent via bridge over UDS), the Kalman node forcibly updates its position state and zeroes its covariance matrix (absolute certainty).
+  1. **Track odometry** — forward speed v (trusted); track yaw rate only with a large variance, because tracks skid in turns
+  2. **Gyro Z** — calibrated (`calibration.cpp`), the main yaw-rate source
+  3. **Zero-rate update** — when both encoders read zero for ≥ 0.5 s, ω = 0 and v = 0 are fused; this estimates the gyro bias online
+  4. **Magnetometer heading (optional, off by default)** — only through a gate: arm-up switch closed ≥ 2 s (magnets off), tracks stopped, field strength and dip angle near calibration, robot level, innovation test. The magnets and motors run on a separate controller, so the arm switch and encoders stand in for magnet state and motor current
+- **Drift correction: manual fixes, never hard resets.** Every fix is a Kalman measurement weighed against the filter's own uncertainty; the covariance is never zeroed.
+  - **Position:** the edges of the field carry cell labels. From any edge cell the operator sends that cell; the GUI reports its centre. Worst case 0.5 m per axis; fused with σ ≈ 0.29 m per axis.
+  - **Heading:** the operator snaps to one of four grid directions, only when the robot is roughly aligned (worst case 22.5°); fused with σ ≈ 13°. Mainly for startup and recovery.
+  - A fix that disagrees with the estimate beyond the 99% χ² limit is shown to the operator for confirmation instead of being applied (catches a wrong cell or direction).
 
 ### 5.2 Mine Detection (Decision Logic)
 
@@ -167,6 +173,6 @@ Linux assigns peripheral paths dynamically based on boot order, so an automated 
 - **Three transport layers**: UART+COBS (Pi↔ESP32), ROS 2 DDS (Pi↔bridge, ONNX↔bridge), UDS (bridge↔GUI).
 - **Video is out-of-band**: RTSP, not DDS.
 - **Fail-safe**: 250ms UART watchdog on ESP32 zeroes PWM if no velocity command arrives.
-- **No GPS**: localization is Kalman filter fusing wheel odometry + Madgwick-filtered IMU, with manual corner-anchor resets.
+- **No GPS**: localization is one 2D EKF fusing track odometry, raw gyro (with a bias state) and an optional gated magnetometer; no Madgwick. Manual edge-cell position fixes and four-way heading fixes enter as measurements, never as hard resets.
 - **Mine classification**: metal-detector threshold × vision confidence → surface (arm engages) vs. underground (arm bypassed).
 - **Docker**: host networking mode required; bind-mounted config; hardware ports discovered and injected at container launch time.

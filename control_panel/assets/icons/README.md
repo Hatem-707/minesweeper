@@ -1,11 +1,9 @@
-# Turn indicator
+# Heading arrow
 
-`turn-right.png` is the 96 × 96 transparent `rotate_right` PNG from
-[Google Material Icons](https://github.com/google/material-design-icons/blob/master/png/image/rotate_right/materialicons/48dp/2x/baseline_rotate_right_black_48dp.png).
-Downloaded October 7, 2026. Apache License 2.0; see `LICENSE-Material-Icons.txt`.
+`arrow.png` is a 96 × 96 white arrow on a transparent background, pointing up
+(+Y on the map). It was drawn for this project with Pillow, so no third-party
+license applies.
 
-SHA-256: `6927d429d2c66dff8c8179f1643f91884e6caa309d9a3661da77d36ab3122e88`
-
-CMake copies the PNG and license beside the executable. DriveControls loads it
-once, inverts its black pixels to white for tinting with the configured text
-color, mirrors it for left turns, and unloads it on destruction.
+CMake copies the PNG beside the executable. The map loads it once and tints it.
+It is rotated to show the robot's heading and the heading of a pending pose
+reset.

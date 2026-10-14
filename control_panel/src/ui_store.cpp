@@ -1,6 +1,5 @@
 #include "ui_store.hpp"
 #include "toml.hpp"
-#include <minesweeper/messages.hpp>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -136,19 +135,7 @@ UiStore::UiStore(const std::filesystem::path& file)
   text_padding = integer(style, "text_padding", text_padding);
   title_font = integer(style, "title_font", title_font, 1);
   roundness = number(style, "roundness", roundness, 0.0f, 1.0f);
-  table_fraction = number(
-    table(root, "Controls"), "table_fraction", table_fraction, 0.01f, 0.99f);
-  const auto& controls_config = table(root, "Controls");
-  control_font = integer(controls_config, "font", control_font, 1);
-  arrow_size = integer(controls_config, "arrow_size", arrow_size, 24);
-  control_gap = integer(controls_config, "gap", control_gap);
-  pickup_button_height =
-    integer(controls_config, "button_height", pickup_button_height, 24);
-  const auto& drive = table(root, "Drive");
-  drive_ramp_rate =
-    number(drive, "ramp_rate", drive_ramp_rate, 0.001f, 100000.0f);
-  maximum_thrust =
-    number(drive, "maximum_thrust", maximum_thrust, 1.0f, msg::drive_limit);
+  status_font = integer(table(root, "Status"), "font", status_font, 1);
 
   const auto& hover = table(root, "Hover");
   hover_scale = number(hover, "scale", hover_scale, 1.0f, 3.0f);
@@ -157,21 +144,40 @@ UiStore::UiStore(const std::filesystem::path& file)
   spring_damping_ratio =
     number(hover, "damping_ratio", spring_damping_ratio, 0.001f, 0.999f);
 
+  mapping.field_size_m = number(table(root, "Map"),
+                                "field_size",
+                                float(mapping.field_size_m),
+                                0.1f,
+                                1000.0f);
+  const auto& detector = table(root, "Detector");
+  mapping.detector_dx =
+    number(detector, "dx", float(mapping.detector_dx), -10.0f, 10.0f);
+  mapping.detector_dy =
+    number(detector, "dy", float(mapping.detector_dy), -10.0f, 10.0f);
+  const auto& classification = table(root, "Classification");
+  mapping.classify_seconds = number(
+    classification, "seconds", float(mapping.classify_seconds), 0.1f, 600.0f);
+  mapping.classify_distance_m = number(classification,
+                                       "distance",
+                                       float(mapping.classify_distance_m),
+                                       0.01f,
+                                       100.0f);
+
   map = panel(root, "Map", map);
   feed = panel(root, "Camera view", feed);
-  controls = panel(root, "Controls", controls);
-  warnings = panel(root, "Warnings", warnings);
+  status = panel(root, "Status", status);
+  messages = panel(root, "Messages", messages);
 
   const auto& colors = table(root, "Colors");
   background = color(colors, "background", background);
   text = color(colors, "text", text);
   unchecked = color(colors, "unchecked", unchecked);
   clean = color(colors, "clean", clean);
+  pending = color(colors, "pending", pending);
   surface_mine = color(colors, "surface_mine", surface_mine);
   buried_mine = color(colors, "buried_mine", buried_mine);
-  thrust = color(colors, "thrust", thrust);
-  thrust_locked = color(colors, "thrust_locked", thrust_locked);
-  control_surface = color(colors, "control_surface", control_surface);
+  robot = color(colors, "robot", robot);
+  selection = color(colors, "selection", selection);
   validate_layout();
 }
 
@@ -193,18 +199,6 @@ UiStore::content_rect() const
            screen_height - 2.0f * padding };
 }
 
-float
-UiStore::drive_meter_width() const
-{
-  return std::max(96.f, 4.5f * control_font);
-}
-
-float
-UiStore::pickup_height() const
-{
-  return static_cast<float>(pickup_button_height);
-}
-
 void
 UiStore::validate_layout() const
 {
@@ -212,7 +206,7 @@ UiStore::validate_layout() const
   if (parent.width <= 0 || parent.height <= 0) {
     invalid("Style.app_padding", "padding consumes the entire window");
   }
-  for (const auto& style : { map, feed, controls, warnings }) {
+  for (const auto& style : { map, feed, status, messages }) {
     const auto rec = style.bounds.resolve(parent);
     if (rec.width <= 2.0f * section_padding ||
         rec.height <= 2.0f * section_padding) {
@@ -226,17 +220,8 @@ UiStore::validate_layout() const
         2.0f * cell_padding) {
     invalid("Style.cell_padding", "map cells have no drawable area");
   }
-  const auto controls_rect = controls.bounds.resolve(parent);
-  const float inner_height = controls_rect.height - 2.0f * section_padding;
-  if (inner_height * table_fraction < 3.0f * (control_font + 2) ||
-      inner_height * (1.0f - table_fraction) - pickup_height() - lock_height -
-          3.0f * control_gap <
-        std::max(80.0f, 2.0f * control_font + 32) ||
-      controls_rect.width - 2.0f * section_padding <
-        2 * drive_meter_width() + pad_meter_gap + meter_gap + 2 * arrow_gap +
-          3 * minimum_arrow_size ||
-      pickup_button_height < title_font + control_font + 16) {
-    invalid("Controls",
-            "not enough room for sensor readings, drive and pickup controls");
+  const auto status_rect = status.bounds.resolve(parent);
+  if (status_rect.height - 2.0f * section_padding < 4.0f * (status_font + 2)) {
+    invalid("Status", "not enough room for the sensor readings");
   }
 }

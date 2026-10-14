@@ -1,17 +1,14 @@
 #pragma once
 #include <array>
-#include <fmt/base.h>
+#include <deque>
 #include <memory>
+#include <optional>
 #include <raylib.h>
 #include <string>
-#include <string_view>
-#include <utility>
 #include <vector>
 
 #include "camera.hpp"
-#include "drive.hpp"
-#include "pickup.hpp"
-#include "spin_lock.hpp"
+#include "mine_map.hpp"
 #include "state.hpp"
 #include "ui_fonts.hpp"
 #include "ui_store.hpp"
@@ -57,12 +54,19 @@ public:
   void self_draw() final;
 };
 
-enum class MineState
+// Operator messages, newest first, plus one prompt line for the action in
+// progress.
+class MessageLog
 {
-  unchecked,
-  clean,
-  surface_mine,
-  buried_mine,
+  static constexpr std::size_t limit = 50;
+  std::deque<std::string> entries;
+  std::string current_prompt;
+
+public:
+  void add(const std::string& message);
+  void set_prompt(std::string prompt) { current_prompt = std::move(prompt); }
+  const std::string& prompt() const { return current_prompt; }
+  const std::deque<std::string>& lines() const { return entries; }
 };
 
 class CellState
@@ -82,12 +86,18 @@ public:
 
 class MapCell final : public Drawable
 {
+  const MineMap& mines;
+  Cell cell;
   CellState state;
   bool hovered = false;
   InputConnection hover_connection;
 
 public:
-  MapCell(const UiStore& ui, Rectangle rec, StateHandler&);
+  MapCell(const UiStore& ui,
+          Rectangle rec,
+          StateHandler&,
+          const MineMap& mines,
+          Cell cell);
   MapCell(const MapCell&) = delete;
   MapCell& operator=(const MapCell&) = delete;
   MapCell(MapCell&&) = delete;
@@ -96,19 +106,43 @@ public:
   void self_draw() override;
   bool is_hovered() const { return hovered; }
   Rectangle get_draw_rec() const;
-  void set_state(CellState target_state);
 };
 
+// Field map: scanned cells, mines and the robot. Right-click a cell, choose a
+// heading with the arrow keys and press Enter to reset the Kalman pose there.
 class Map final : public Section
 {
+  const MineMap& mines;
+  Wire& wire;
+  MessageLog& log;
   std::array<MapCell*, UiStore::grid_size * UiStore::grid_size> cells;
+  std::vector<InputConnection> connections;
+  Texture2D arrow{};
+  std::optional<Cell> reset_cell;
+  std::optional<msg::Heading> reset_heading;
+
+  Rectangle field_rec() const;
+  Rectangle cell_rec(Cell cell) const;
+  void draw_arrow(Vector2 center, float size, float degrees, Color tint) const;
+  void draw_robot() const;
+  void draw_reset() const;
+  void select(std::pair<float, float> position);
+  void send_reset();
+  void cancel_reset();
+  void update_prompt();
 
 protected:
   void draw_children(float dt) override;
 
 public:
-  Map(const UiStore& ui, StateHandler& state_handler);
-  MapCell& cell_at(int x, int y);
+  Map(const UiStore& ui,
+      StateHandler& state_handler,
+      const MineMap& mines,
+      Wire& wire,
+      MessageLog& log);
+  ~Map() override;
+  Map(const Map&) = delete;
+  Map& operator=(const Map&) = delete;
 };
 
 class CameraFeed final : public Drawable
@@ -122,105 +156,40 @@ public:
 
 class Feed final : public Section
 {
-
 public:
   Feed(const UiStore& ui, GstCamera& camera);
 };
 
-enum class DriveChannel
-{
-  linear,
-  angular
-};
-
-class CommandMeter final : public Drawable
-{
-  const DriveController& drive;
-  DriveChannel channel;
-  void self_draw() override;
-
-public:
-  CommandMeter(const UiStore& ui,
-               Rectangle rec,
-               const DriveController& drive,
-               DriveChannel channel);
-};
-
-struct DriveLayout
-{
-  std::array<Rectangle, 4> arrows; // Up, down, left, right.
-  std::array<Rectangle, 2> meters; // Linear, angular.
-  Rectangle lock;
-};
-
-class DriveControls final : public Drawable
-{
-  const DriveController& drive;
-  const DriveInput& input;
-  const DriveLayout positions;
-  Texture2D turn_arrow{};
-  DriveLayout calculate_layout() const;
-  void self_draw() override;
-
-public:
-  DriveControls(const UiStore& ui,
-                Rectangle rec,
-                const DriveController& drive,
-                const DriveInput& input);
-  ~DriveControls() override;
-  DriveControls(const DriveControls&) = delete;
-  DriveControls& operator=(const DriveControls&) = delete;
-  const DriveLayout& layout() const { return positions; }
-};
-
-class TableControls final : public Drawable
+class StatusTable final : public Drawable
 {
   Wire& wire;
+  const MineMap& mines;
   void self_draw() override;
 
 public:
-  TableControls(const UiStore& ui, Rectangle rec, Wire& wire);
+  StatusTable(const UiStore& ui,
+              Rectangle rec,
+              Wire& wire,
+              const MineMap& mines);
 };
 
-class PickupControl final : public Drawable
+class Status final : public Section
 {
-  PickupController& controller;
-  Wire& wire;
-  const StateHandler& handler;
-  std::array<InputConnection, 2> connections;
-  bool requested = false;
-  void self_update(float dt) override;
+public:
+  Status(const UiStore& ui, Wire& wire, const MineMap& mines);
+};
+
+class MessageList final : public Drawable
+{
+  const MessageLog& log;
   void self_draw() override;
 
 public:
-  PickupControl(const UiStore& ui,
-                Rectangle rec,
-                StateHandler& handler,
-                Wire& wire,
-                PickupController& controller);
+  MessageList(const UiStore& ui, Rectangle rec, const MessageLog& log);
 };
 
-class Controls final : public Section
-{
-  DriveController& drive;
-  Wire& wire;
-  const StateHandler& handler;
-  std::array<bool, 8> held_keys{};
-  std::array<InputConnection, 9> key_connections;
-  DriveInput input;
-  bool lock_requested = false;
-  void self_update(float dt) override;
-
-public:
-  Controls(const UiStore& ui,
-           Wire& wire,
-           StateHandler& handler,
-           DriveController& drive,
-           PickupController& pickup);
-};
-
-class Warnings final : public Section
+class Messages final : public Section
 {
 public:
-  Warnings(const UiStore& ui);
+  Messages(const UiStore& ui, const MessageLog& log);
 };

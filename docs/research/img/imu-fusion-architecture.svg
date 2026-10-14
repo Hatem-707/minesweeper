@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 590" width="920" height="590" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#555"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="920" height="590" fill="#ffffff"/>
+
+  <text x="20" y="34" font-size="17" font-weight="700" fill="#111">Proposed fusion: raw sensors into one 2D EKF, magnetometer gated</text>
+  <text x="20" y="54" font-size="13" fill="#555">No Madgwick stage. Calibration code is reused; every input enters the filter once, with its own noise.</text>
+
+  <!-- connectors -->
+  <g fill="none" stroke="#555" stroke-width="1.4">
+    <path d="M210 115H288" marker-end="url(#arrow)"/>
+    <path d="M540 115H658" marker-end="url(#arrow)"/>
+    <path d="M210 215H288" marker-end="url(#arrow)"/>
+    <path d="M540 215H658" marker-end="url(#arrow)"/>
+    <path d="M415 250V288" marker-end="url(#arrow)"/>
+    <path d="M210 330H288" marker-end="url(#arrow)"/>
+    <path d="M210 410H288" marker-end="url(#arrow)"/>
+    <path d="M540 365H658" marker-end="url(#arrow)"/>
+    <path d="M210 515H600V440H658" marker-end="url(#arrow)"/>
+    <path d="M780 470V498" marker-end="url(#arrow)"/>
+  </g>
+  <text x="600" y="106" text-anchor="middle" font-size="12" fill="#555">v, ω, stopped</text>
+  <text x="600" y="206" text-anchor="middle" font-size="12" fill="#555">ω_z (main)</text>
+  <text x="423" y="274" font-size="12" fill="#555">|a|, tilt</text>
+  <text x="600" y="356" text-anchor="middle" font-size="12" fill="#555">heading</text>
+  <text x="600" y="384" text-anchor="middle" font-size="12" fill="#555">(only if all pass)</text>
+  <text x="405" y="507" text-anchor="middle" font-size="12" fill="#555">x, y, θ fixes</text>
+
+  <!-- left column: inputs -->
+  <g>
+    <rect x="20" y="85" width="190" height="60" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="115" y="110" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Track encoders</text>
+    <text x="115" y="130" text-anchor="middle" fill="#333">left + right speed</text>
+  </g>
+  <g>
+    <rect x="20" y="185" width="190" height="60" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="115" y="210" text-anchor="middle" font-size="15" font-weight="700" fill="#111">MPU6050</text>
+    <text x="115" y="230" text-anchor="middle" fill="#333">gyro + accel, 50 Hz</text>
+  </g>
+  <g>
+    <rect x="20" y="300" width="190" height="60" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="115" y="325" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Magnetometer</text>
+    <text x="115" y="345" text-anchor="middle" fill="#333">HW-290 (HMC/QMC5883)</text>
+  </g>
+  <g>
+    <rect x="20" y="380" width="190" height="60" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="115" y="405" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Arm-up switch</text>
+    <text x="115" y="425" text-anchor="middle" fill="#333">up = magnets off</text>
+  </g>
+  <g>
+    <rect x="20" y="485" width="190" height="60" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="115" y="510" text-anchor="middle" font-size="15" font-weight="700" fill="#111">GUI manual fixes</text>
+    <text x="115" y="530" text-anchor="middle" fill="#333">cell centre + 4-way heading</text>
+  </g>
+
+  <!-- middle column: preprocessing -->
+  <g>
+    <rect x="290" y="70" width="250" height="90" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="415" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Track odometry</text>
+    <text x="304" y="114" fill="#333">v = forward speed (trusted)</text>
+    <text x="304" y="131" fill="#333">ω from tracks (large variance)</text>
+    <text x="304" y="148" fill="#333">stopped ≥ 0.5 s → zero-rate update</text>
+  </g>
+  <g>
+    <rect x="290" y="180" width="250" height="70" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="415" y="204" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Calibration (reused)</text>
+    <text x="415" y="223" text-anchor="middle" fill="#333">bias, scale, mount rotation</text>
+    <text x="415" y="240" text-anchor="middle" fill="#666" font-size="12">calibration.cpp</text>
+  </g>
+  <g>
+    <rect x="290" y="290" width="250" height="150" rx="8" fill="#fff7e6" stroke="#c77700" stroke-width="2"/>
+    <text x="415" y="314" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Magnetometer gate</text>
+    <text x="304" y="334" fill="#333">all must pass:</text>
+    <text x="304" y="352" fill="#333">• |B| within ±5% of calibrated</text>
+    <text x="304" y="369" fill="#333">• dip angle within ±3°</text>
+    <text x="304" y="386" fill="#333">• |a| within 0.05 g, tilt &lt; 3°</text>
+    <text x="304" y="403" fill="#333">• arm up ≥ 2 s, tracks stopped</text>
+    <text x="304" y="420" fill="#333">• innovation test (χ², 99%)</text>
+  </g>
+
+  <!-- right column: filter -->
+  <g>
+    <rect x="660" y="70" width="240" height="400" rx="8" fill="#e8f1fc" stroke="#2f6fb8" stroke-width="2"/>
+    <text x="780" y="96" text-anchor="middle" font-size="16" font-weight="700" fill="#111">2D EKF</text>
+    <text x="780" y="118" text-anchor="middle" fill="#111">state: x, y, θ, v, ω, b_gz</text>
+    <line x1="676" y1="134" x2="884" y2="134" stroke="#9db8dc"/>
+    <text x="676" y="156" font-weight="700" fill="#111">predict</text>
+    <text x="676" y="174" fill="#333">unicycle, constant v and ω</text>
+    <text x="676" y="192" fill="#333">b_gz as a slow random walk</text>
+    <line x1="676" y1="208" x2="884" y2="208" stroke="#9db8dc"/>
+    <text x="676" y="230" font-weight="700" fill="#111">updates</text>
+    <text x="676" y="250" fill="#333">gyro: ω_z = ω + b_gz</text>
+    <text x="676" y="270" fill="#333">tracks: v (tight), ω (loose)</text>
+    <text x="676" y="290" fill="#333">stopped: ω = 0, v = 0</text>
+    <text x="676" y="310" fill="#333">  → this is what learns b_gz</text>
+    <text x="676" y="370" fill="#333">magnetometer: θ (gated)</text>
+    <text x="676" y="430" fill="#333">cell fix: x, y (σ 0.29 m)</text>
+    <text x="676" y="450" fill="#333">heading fix: θ (σ 13°)</text>
+  </g>
+  <g>
+    <rect x="690" y="500" width="180" height="56" rx="8" fill="none" stroke="#555" stroke-width="1.25"/>
+    <text x="780" y="523" text-anchor="middle" font-size="15" font-weight="700" fill="#111">/pose</text>
+    <text x="780" y="542" text-anchor="middle" fill="#333">with covariance</text>
+  </g>
+</svg>
