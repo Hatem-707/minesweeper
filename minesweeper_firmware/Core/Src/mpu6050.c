@@ -4,21 +4,39 @@
 #define MPU6050_REG_CONFIG       0x1AU
 #define MPU6050_REG_GYRO_CONFIG  0x1BU
 #define MPU6050_REG_ACCEL_CONFIG 0x1CU
+#define MPU6050_REG_INT_PIN_CFG  0x37U
 #define MPU6050_REG_ACCEL_XOUT_H 0x3BU
+#define MPU6050_REG_USER_CTRL    0x6AU
 #define MPU6050_REG_PWR_MGMT_1   0x6BU
 #define MPU6050_REG_WHO_AM_I     0x75U
 
-#define MPU6050_I2C_TIMEOUT_MS   100U
+#define MPU6050_I2C_TIMEOUT_MS   10U
 
 /* +/-2g -> 16384 LSB/g, +/-250 dps -> 131 LSB/(deg/s) */
 #define MPU6050_ACCEL_SENSITIVITY 16384.0f
 #define MPU6050_GYRO_SENSITIVITY  131.0f
+
+uint8_t MPU6050_LastWhoAmI;
 
 static HAL_StatusTypeDef MPU6050_WriteReg(I2C_HandleTypeDef *hi2c, uint16_t dev_addr,
                                            uint8_t reg, uint8_t value)
 {
   return HAL_I2C_Mem_Write(hi2c, dev_addr, reg, I2C_MEMADD_SIZE_8BIT,
                             &value, 1U, MPU6050_I2C_TIMEOUT_MS);
+}
+
+HAL_StatusTypeDef MPU6050_SetBypass(I2C_HandleTypeDef *hi2c, uint16_t dev_addr,
+                                    uint8_t enable)
+{
+  HAL_StatusTypeDef status;
+  /* Disable I2C Master mode in USER_CTRL (bit 5 = 0) so the MPU does not drive the aux bus */
+  status = MPU6050_WriteReg(hi2c, dev_addr, MPU6050_REG_USER_CTRL, 0x00U);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  /* Set bit 1 (I2C_BYPASS_EN = 0x02) in INT_PIN_CFG to bridge main I2C bus to aux I2C bus */
+  return MPU6050_WriteReg(hi2c, dev_addr, MPU6050_REG_INT_PIN_CFG, enable ? 0x02U : 0x00U);
 }
 
 HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c, uint16_t dev_addr)
@@ -33,6 +51,7 @@ HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c, uint16_t dev_addr)
   {
     return status;
   }
+  MPU6050_LastWhoAmI = who_am_i;
 
   /* Wake up the device from sleep mode and use internal 8MHz oscillator */
   status = MPU6050_WriteReg(hi2c, dev_addr, MPU6050_REG_PWR_MGMT_1, 0x00U);
@@ -64,8 +83,13 @@ HAL_StatusTypeDef MPU6050_Init(I2C_HandleTypeDef *hi2c, uint16_t dev_addr)
 
   /* Accel full scale range: +/-2g */
   status = MPU6050_WriteReg(hi2c, dev_addr, MPU6050_REG_ACCEL_CONFIG, 0x00U);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
 
-  return status;
+  /* Enable I2C bypass mode so the magnetometer (e.g. on HW-290/GY-87) is accessible on the main I2C bus */
+  return MPU6050_SetBypass(hi2c, dev_addr, 1U);
 }
 
 HAL_StatusTypeDef MPU6050_ReadAll(I2C_HandleTypeDef *hi2c, uint16_t dev_addr,

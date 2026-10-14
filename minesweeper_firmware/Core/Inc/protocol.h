@@ -19,13 +19,21 @@ typedef struct
   uint8_t seq;
   int32_t encoder_left;
   int32_t encoder_right;
-  uint16_t metal_detector_raw;
+  uint16_t metal_detector_raw; /* digital level of the detector output: 0 = low, 1 = high */
   int16_t accel_x_raw;
   int16_t accel_y_raw;
   int16_t accel_z_raw;
   int16_t gyro_x_raw;
   int16_t gyro_y_raw;
   int16_t gyro_z_raw;
+  int16_t mag_x_raw;
+  int16_t mag_y_raw;
+  int16_t mag_z_raw;
+  uint8_t imu_status;   /* 0 = ok; else 1 + HAL_StatusTypeDef of the failing call (1 error, 2 busy, 3 timeout), or 4 = all-zero data */
+  uint8_t mag_status;   /* 0 = ok; else 1 + HAL_StatusTypeDef of the failing call, or 4 = offline/not detected */
+  uint8_t imu_who_am_i; /* last WHO_AM_I value read (0x68 for a genuine MPU6050) */
+  uint8_t mag_who_am_i; /* magnetometer chip ID / type (0x48 for HMC5883L, 0xFF for QMC5883L, 0 = none) */
+  uint16_t i2c_error;   /* hi2c2.ErrorCode */
   uint8_t crc;
 } TelemetryPacket_t;
 
@@ -33,8 +41,8 @@ typedef struct
 typedef struct
 {
   uint8_t seq;
-  int16_t left_duty;  /* -1000..1000 */
-  int16_t right_duty; /* -1000..1000 */
+  int16_t linear_x;  /* mm/s, +forward */
+  int16_t angular_z; /* mrad/s, +counter-clockwise */
   uint8_t flags;
   uint8_t crc;
 } CommandPacket_t;
